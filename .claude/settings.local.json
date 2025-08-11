@@ -15,7 +15,18 @@
       "Bash(docker exec:*)",
       "Bash(docker logs:*)",
       "Bash(grep:*)",
-      "Bash(mvn clean:*)"
+      "Bash(mvn clean:*)",
+      "WebFetch(domain:docs.permit.io)",
+      "Bash(export PERMIT_API_KEY=\"permit_key_dVpkj7qMkhFHBdgA1misPKVqPdo25lr86Lxo1cvr9cDirVPcfRIVLjWsCSGRpig2H9Tv3hG6F7jdsQijJHIYHN\")",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/scripts/evaluate-gates.sh snyk-results.json)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "Bash(chmod:*)",
+      "Bash(./gating/scripts/evaluate-gates.sh:*)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(./gating/scripts/validate-permit.sh:*)",
+      "Bash(git add:*)"
     ],
     "deny": []
   }

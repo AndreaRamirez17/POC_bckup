@@ -146,10 +146,10 @@ test_gates() {
     echo ""
     
     # Make the script executable
-    chmod +x scripts/evaluate-gates.sh
+    chmod +x gating/scripts/evaluate-gates.sh
     
     # Run gate evaluation
-    ./scripts/evaluate-gates.sh snyk-results.json
+    ./gating/scripts/evaluate-gates.sh snyk-results.json
     local exit_code=$?
     
     echo ""

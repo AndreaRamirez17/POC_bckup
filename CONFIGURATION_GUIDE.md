@@ -410,7 +410,83 @@ git push origin production
 
 **For this PoC**: The OPAL fetcher is already configured in Docker Compose and will automatically provide Snyk data to the PDP.
 
-### Step 7: Deploy Local PDP
+### Step 7: Configure Editor Role for Security Gate Overrides
+
+The PoC includes an **Editor Override** feature that allows authorized users to bypass security gates while maintaining full audit trail. This is useful for emergency deployments and testing scenarios.
+
+#### 1. Create Users in Permit.io
+
+1. **Navigate to User Management**
+   - In Permit.io dashboard, go to "User Management"
+   - Click the "Users" tab
+
+2. **Add Editor User**
+   - Click "Add user" or "Create user"
+   - **User Key**: Use a descriptive identifier (e.g., `santander.david.19`, `your.name.editor`)
+   - **Email**: Enter the user's email address
+   - **First Name & Last Name**: Enter user details
+
+3. **Assign Editor Role**
+   - In the "Top Level Access" section, select **"editor"** role
+   - Ensure the editor role has appropriate permissions configured (see Step 5 above)
+   - Click "Save" or "Create User"
+
+#### 2. Configure Editor Override in .env
+
+1. **Update .env File**
+   ```bash
+   # Enable editor override by uncommenting and updating these lines:
+   USER_ROLE=editor
+   USER_KEY=your_editor_user_key_from_step_1
+   
+   # Example:
+   # USER_ROLE=editor
+   # USER_KEY=santander.david.19
+   ```
+
+2. **Test Editor Override**
+   ```bash
+   # Run gate evaluation with editor privileges
+   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   
+   # Expected result: EDITOR_OVERRIDE - Deployment allowed despite critical vulnerabilities
+   ```
+
+#### 3. Switch Between Normal and Override Modes
+
+**Normal Security Gates (Default):**
+```bash
+# In .env file, use:
+USER_ROLE=ci-pipeline
+USER_KEY=github-actions
+```
+
+**Editor Override Mode:**
+```bash
+# In .env file, use:
+USER_ROLE=editor
+USER_KEY=your_editor_user_key
+```
+
+#### 4. Editor Override Behavior
+
+When editor role is active:
+- ✅ **Allows deployment** despite critical vulnerabilities
+- 📋 **Shows clear audit trail** of who overrode the gates
+- 🔍 **Lists all vulnerabilities** being overridden
+- ⚠️ **Provides warnings** about security risks
+- 📝 **Logs override decision** for compliance tracking
+- ✨ **Returns success exit code** (0) to allow deployment
+
+#### 5. Security Considerations
+
+- **Use Sparingly**: Editor override should only be used for emergency deployments or testing
+- **Audit Trail**: All override actions are logged with user identification
+- **Post-Deployment**: Address critical vulnerabilities immediately after override deployment
+- **Access Control**: Limit editor role assignment to authorized personnel only
+- **Review Process**: Implement approval workflows for editor role assignments in production
+
+### Step 8: Deploy Local PDP
 
 1. **Pull PDP Docker Image**
    ```bash
@@ -508,7 +584,7 @@ git push origin production
 
 1. **Create .env File**
    ```bash
-   cp .env.example .env
+   cp .env.example .env || echo "Using existing .env file"
    ```
 
 2. **Add Your Credentials**
@@ -522,6 +598,17 @@ git push origin production
 
    # Optional: Specific project ID if you imported to Snyk
    SNYK_PROJECT_ID=project-uuid-if-imported
+
+   # Security Gates Configuration
+   # User role for security gate evaluation (default: ci-pipeline, override: editor)
+   USER_ROLE=ci-pipeline
+   # User key for security gate evaluation (default: github-actions)
+   USER_KEY=github-actions
+
+   # Editor Override Configuration
+   # Uncomment these lines to test with editor privileges that can override security gates
+   # USER_ROLE=editor
+   # USER_KEY=your_editor_user_key_from_permit_io
    ```
 
 ### Step 2: Configure GitHub Secrets (For CI/CD)
@@ -638,6 +725,36 @@ git push origin production
    - Hard gate should FAIL (critical vulnerabilities)
    - Soft gate should WARN (high vulnerabilities)
 
+4. **Test Editor Override Functionality**
+   
+   **Step A: Test Normal Gate Behavior**
+   ```bash
+   # Ensure normal settings in .env
+   # USER_ROLE=ci-pipeline
+   # USER_KEY=github-actions
+   
+   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   # Expected: FAIL - Hard gate triggered (critical vulnerabilities)
+   ```
+   
+   **Step B: Test Editor Override**
+   ```bash
+   # Enable editor override in .env
+   # USER_ROLE=editor
+   # USER_KEY=your_editor_user_key
+   
+   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   # Expected: EDITOR_OVERRIDE - Deployment allowed with editor privileges
+   ```
+   
+   **Step C: Verify Override Output**
+   The editor override should show:
+   - ✅ Clear "EDITOR_OVERRIDE" decision message
+   - 📋 User role and key information
+   - 🔍 List of critical vulnerabilities being overridden
+   - ⚠️ Warning about post-deployment remediation
+   - ✅ Exit code 0 (success)
+
 ### Step 4: Verify GitHub Actions
 
 1. **Push Code to Repository**
@@ -702,6 +819,52 @@ curl -X POST https://api.permit.io/v2/sync \
   -H "Authorization: Bearer $PERMIT_API_KEY"
 ```
 
+### Common Editor Override Issues
+
+**Issue: "Editor override not working"**
+```bash
+# Solution: Verify user and role configuration
+# 1. Check .env file has correct USER_ROLE and USER_KEY
+grep USER_ROLE .env
+grep USER_KEY .env
+
+# 2. Verify user exists in Permit.io with editor role
+# Login to Permit.io → User Management → verify user and role
+
+# 3. Test with debug mode
+DEBUG=true ./gating/scripts/evaluate-gates.sh snyk-results.json
+```
+
+**Issue: "User does not match any rule"**
+```bash
+# This means the user/role combination is not authorized in Permit.io
+# Solution: 
+# 1. Verify editor role has "deploy" permissions in Permit.io policy matrix
+# 2. Ensure user is assigned the editor role
+# 3. Check the USER_KEY matches exactly the user key in Permit.io
+```
+
+**Issue: "Still getting FAIL instead of EDITOR_OVERRIDE"**
+```bash
+# Solution: Check the decision logic
+# 1. Verify USER_ROLE=editor in .env (not commented out)
+# 2. Ensure Permit.io allows the editor user to deploy
+# 3. Check that critical vulnerabilities are present (needed to trigger override logic)
+
+# Debug steps:
+echo "USER_ROLE: $USER_ROLE"
+echo "USER_KEY: $USER_KEY"
+./gating/scripts/evaluate-gates.sh snyk-results.json
+```
+
+**Issue: "Editor override shows but exits with error code"**
+```bash
+# This shouldn't happen with correct implementation
+# Solution: Check script logic
+# The EDITOR_OVERRIDE case should return 0 (success)
+# If this occurs, check the evaluate-gates.sh script logic
+```
+
 ### Docker Compose Issues
 
 **Issue: "Port already in use"**
@@ -730,17 +893,106 @@ docker-compose up -d
    ```bash
    # Ensure .env is in .gitignore
    echo ".env" >> .gitignore
+   
+   # Verify .env is not tracked
+   git status --ignored
    ```
 
 2. **Use Secret Management**
    - Use GitHub Secrets for CI/CD
    - Consider HashiCorp Vault for production
-   - Rotate keys regularly
+   - Rotate keys regularly (quarterly recommended)
+   - Use separate keys for different environments
 
 3. **Limit Key Permissions**
    - Create read-only keys where possible
    - Use environment-specific keys
    - Audit key usage regularly
+   - Monitor API key access logs
+
+### Role-Based Access Control & Security Gates
+
+#### 1. Role Hierarchy and Permissions
+
+**ci-pipeline Role (Default)**
+- ✅ **Purpose**: Standard CI/CD pipeline execution
+- ❌ **Cannot**: Override security gates
+- 🔒 **Security**: Enforces all hard gates (critical vulnerabilities block deployment)
+- 📊 **Use Case**: Normal automated deployments, production pipelines
+
+**editor Role (Override)**
+- ⚠️ **Purpose**: Emergency deployments, testing, authorized overrides
+- ✅ **Can**: Bypass critical vulnerability gates
+- 🔍 **Security**: Full audit trail, clear warnings, vulnerability visibility
+- 👤 **Use Case**: Emergency fixes, security team overrides, testing scenarios
+
+#### 2. Editor Override Security Model
+
+**Audit Trail Components:**
+- 📝 **User Identification**: Who performed the override (USER_KEY)
+- 🏷️ **Role Verification**: Confirms editor role permissions
+- 🕐 **Timestamp**: When the override occurred
+- 📋 **Vulnerability List**: Exact vulnerabilities being overridden
+- ⚠️ **Risk Assessment**: Clear warnings about security implications
+
+**Security Controls:**
+```bash
+# All override actions are logged with:
+# - User identity (santander.david.19)
+# - Role (editor)
+# - Vulnerability count and details
+# - Timestamp and context
+# - Recommendations for remediation
+```
+
+#### 3. Production Security Considerations
+
+**Access Control:**
+- 🔐 **Principle of Least Privilege**: Assign editor role only to authorized personnel
+- 👥 **Limited Assignment**: Restrict editor role to security team, senior engineers
+- 🕰️ **Temporary Access**: Consider time-bound editor permissions
+- 📋 **Approval Process**: Require approval workflow for editor role assignments
+
+**Monitoring and Compliance:**
+- 📊 **Override Tracking**: Monitor frequency and justification of overrides
+- 🚨 **Alert System**: Alert on editor override usage
+- 📈 **Metrics Collection**: Track override patterns for security analysis
+- 🔍 **Regular Audits**: Review editor role assignments quarterly
+
+**Emergency Procedures:**
+```bash
+# Emergency Override Process:
+# 1. Verify critical business need
+# 2. Document security risk assessment  
+# 3. Enable editor override temporarily
+# 4. Deploy with full audit trail
+# 5. Immediately address vulnerabilities post-deployment
+# 6. Revert to normal security gates
+# 7. Document incident and lessons learned
+```
+
+#### 4. Implementation Security
+
+**Environment Separation:**
+```bash
+# Production Environment
+USER_ROLE=ci-pipeline  # Default - no overrides
+USER_KEY=production-pipeline
+
+# Staging Environment  
+USER_ROLE=editor       # Allow overrides for testing
+USER_KEY=staging-editor
+
+# Development Environment
+USER_ROLE=editor       # Flexible for development
+USER_KEY=dev-editor
+```
+
+**Configuration Security:**
+- 🔒 **Secure Storage**: Store editor user keys in secure secret management
+- 🔄 **Regular Rotation**: Rotate editor credentials regularly
+- 📝 **Change Control**: Version control all role configuration changes
+- 🔍 **Access Review**: Regular review of who has editor access
 
 ### Network Security
 
@@ -757,6 +1009,36 @@ docker-compose up -d
    - Configure TLS for production PDP
    - Use HTTPS for API communications
    - Validate certificates
+
+### Compliance and Governance
+
+#### Security Gate Override Policy
+
+**When to Use Editor Override:**
+- ✅ Critical security patches that require immediate deployment
+- ✅ Zero-day vulnerability fixes where patching is more urgent than gate compliance
+- ✅ Emergency business-critical deployments with security team approval
+- ✅ Testing and validation of security gate configurations
+- ❌ Regular deployments to avoid fixing vulnerabilities
+- ❌ Convenience to bypass security processes
+- ❌ Lack of time for proper vulnerability remediation
+
+**Override Documentation Requirements:**
+1. **Justification**: Document business/security need for override
+2. **Risk Assessment**: Evaluate and document security risks
+3. **Remediation Plan**: Define timeline for vulnerability fixes
+4. **Approval**: Obtain appropriate authorization
+5. **Post-Deployment**: Execute remediation plan immediately
+
+**Audit and Reporting:**
+```bash
+# Generate override audit report
+grep "EDITOR_OVERRIDE" pipeline-logs/*.log | \
+  awk '{print $1, $2, $3}' > override-audit.csv
+
+# Monitor override frequency
+grep -c "EDITOR_OVERRIDE" pipeline-logs/*.log
+```
 
 ---
 

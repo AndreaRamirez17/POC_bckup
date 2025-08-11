@@ -50,15 +50,23 @@ This PoC demonstrates an end-to-end security gating solution that:
 - **Redis**: Message broker for OPAL pub/sub
 - **Spring App**: The mock application being tested
 
-### 3. Security Policies
+### 3. Security Policies & Role-Based Access
 - **Hard Gate**: Fails pipeline on critical vulnerabilities
 - **Soft Gate**: Warns on high severity vulnerabilities
 - **Info Gate**: Provides information on medium severity issues
+- **Editor Override**: Allows authorized users to bypass security gates with full audit trail
+- **Role-Based Permissions**: Different access levels (ci-pipeline, editor) with appropriate permissions
 
-### 4. GitHub Actions Workflow
+### 4. Gate Evaluation Scripts (`gating/scripts/`)
+- **evaluate-gates.sh**: Main security gate evaluation script with role-based override support
+- **test-gates-local.sh**: Local testing utility for full pipeline simulation
+- **validate-permit.sh**: Permit.io configuration validation script
+- **Enhanced .env Configuration**: Flexible user role and key management
+
+### 5. GitHub Actions Workflow
 - Builds and scans the application
-- Evaluates security gates
-- Makes deployment decisions based on gate results
+- Evaluates security gates with role-based access
+- Makes deployment decisions based on gate results and user permissions
 
 ## Prerequisites
 
@@ -84,26 +92,30 @@ cd cicd-pipeline-poc
 
 **Quick setup summary:**
 ```bash
-# Copy environment template
-cp .env.example .env
+# Copy environment template (if it exists)
+cp .env.example .env || echo "Using existing .env file"
 
 # Edit .env with your API keys (see Configuration Guide for details)
 # PERMIT_API_KEY=your_permit_api_key_here
 # SNYK_TOKEN=your_snyk_token_here
 # SNYK_ORG_ID=your_snyk_org_id_here
 
+# Configure user role (optional - for testing editor override)
+# USER_ROLE=editor
+# USER_KEY=your_editor_user_key
+
 # Validate configurations
 chmod +x scripts/validate-snyk.sh
 ./scripts/validate-snyk.sh
 
-chmod +x scripts/validate-permit.sh  
-./scripts/validate-permit.sh
+chmod +x gating/scripts/validate-permit.sh  
+./gating/scripts/validate-permit.sh
 ```
 
 ### 3. Run Local Test
 ```bash
-chmod +x scripts/test-gates-local.sh
-./scripts/test-gates-local.sh
+chmod +x gating/scripts/test-gates-local.sh
+./gating/scripts/test-gates-local.sh
 ```
 
 Select option 1 for a full test run.
@@ -125,7 +137,7 @@ cd ..
 
 ### Evaluate Gates
 ```bash
-./scripts/evaluate-gates.sh snyk-results.json
+./gating/scripts/evaluate-gates.sh snyk-results.json
 ```
 
 ### Expected Results
@@ -134,6 +146,25 @@ With the included vulnerable dependencies, you should see:
 - **Hard Gate**: FAIL (due to critical Log4j vulnerability)
 - **Soft Gate**: WARN (due to high severity Commons Collections vulnerability)
 - **Info**: Medium severity Jackson Databind vulnerability
+
+### Editor Override Testing
+
+To test the editor override functionality:
+```bash
+# Enable editor override in .env file
+# Uncomment these lines:
+# USER_ROLE=editor  
+# USER_KEY=santander.david.19
+
+# Run the gate evaluation
+./gating/scripts/evaluate-gates.sh snyk-results.json
+```
+
+**Expected Editor Override Results:**
+- **Decision**: EDITOR_OVERRIDE - Deployment allowed despite critical vulnerabilities
+- **Output**: Clear warning showing editor privileges are active
+- **Audit Trail**: Shows user, role, and specific vulnerabilities being overridden
+- **Exit Code**: 0 (deployment proceeds)
 
 ## GitHub Actions Setup
 
@@ -171,6 +202,15 @@ Check the Actions tab to see:
 **Setup**: Update all dependencies to secure versions
 **Result**: Pipeline PASSES
 **Message**: "All security gates passed"
+
+### Scenario 4: Editor Override (Security Gate Bypass)
+**Setup**: Configure editor role in .env and run with critical vulnerabilities
+**Result**: Pipeline PASSES with override warning
+**Message**: "EDITOR OVERRIDE - Deployment allowed with editor privileges"
+**Details**: 
+- Shows clear audit trail of who overrode the gates
+- Lists all critical vulnerabilities being overridden
+- Provides recommendations for post-deployment remediation
 
 ## Customization
 
@@ -221,21 +261,33 @@ cicd-pipeline-poc/
 ├── .github/
 │   └── workflows/
 │       └── gating-pipeline.yml      # GitHub Actions workflow
+├── gating/                         # Security gating components
+│   ├── docs/                       # Gating documentation
+│   │   ├── README.md               # Gating setup guide
+│   │   └── PERMIT_IO_GATING_BRD.md # Business requirements
+│   ├── scripts/                    # Gate evaluation scripts
+│   │   ├── evaluate-gates.sh       # Main gate evaluation script
+│   │   ├── validate-permit.sh      # Permit.io validation
+│   │   └── test-gates-local.sh     # Local testing utility
+│   ├── policies/                   # Security policies
+│   │   ├── gating_policy.rego      # OPA/Rego security policies
+│   │   └── permit_config.json      # Permit.io configuration
+│   ├── opal-fetcher/              # Custom data fetcher
+│   │   ├── main.py                # Snyk data fetcher service
+│   │   ├── Dockerfile             # Fetcher container
+│   │   └── requirements.txt       # Python dependencies
+│   ├── workflows/                  # Workflow templates
+│   │   └── gating-pipeline.yml     # Gating pipeline workflow
+│   └── docker/                     # Docker configurations
+│       └── docker-compose.gating.yml # Gating services
 ├── mock-app/
 │   ├── src/                        # Spring Boot application source
 │   ├── pom.xml                     # Maven config with vulnerable deps
 │   └── Dockerfile                  # Application container
-├── opal-fetcher/
-│   ├── main.py                     # Custom Snyk data fetcher
-│   └── Dockerfile                  # Fetcher container
-├── policies/
-│   ├── gating_policy.rego          # OPA/Rego security policies
-│   └── permit_config.json          # Permit.io configuration
 ├── scripts/
-│   ├── evaluate-gates.sh           # Gate evaluation script
-│   └── test-gates-local.sh         # Local testing utility
-├── docker-compose.yml              # Infrastructure definition
-├── .env.example                    # Environment template
+│   └── validate-snyk.sh            # Snyk validation script
+├── docker-compose.yml              # Main infrastructure definition
+├── .env                            # Environment configuration
 └── README.md                       # This file
 ```
 
@@ -253,10 +305,11 @@ After validating this PoC:
 
 For issues or questions:
 - **Start here**: [Configuration Guide](CONFIGURATION_GUIDE.md) for setup help
-- Review the [Business Requirements Document](gating/PERMIT_IO_GATING_BRD.md)  
+- **Security Gating**: [Gating Documentation](gating/docs/README.md) for gating-specific setup
+- Review the [Business Requirements Document](gating/docs/PERMIT_IO_GATING_BRD.md)  
 - Check service logs: `docker-compose logs`
-- Enable debug mode: `DEBUG=true ./scripts/evaluate-gates.sh`
-- Validate your setup: `./scripts/validate-snyk.sh` and `./scripts/validate-permit.sh`
+- Enable debug mode: `DEBUG=true ./gating/scripts/evaluate-gates.sh`
+- Validate your setup: `./scripts/validate-snyk.sh` and `./gating/scripts/validate-permit.sh`
 
 ## License
 

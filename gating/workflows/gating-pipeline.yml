@@ -1,0 +1,230 @@
+name: CI/CD Security Gating Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      override_gates:
+        description: 'Override security gates (requires approval)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  JAVA_VERSION: '11'
+  MAVEN_VERSION: '3.8.6'
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  build-and-scan:
+    name: Build and Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+            
+      - name: Build Spring Boot application
+        run: |
+          cd mock-app
+          mvn clean compile
+          
+      - name: Run Snyk security scan
+        id: snyk_scan
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Install Snyk CLI
+          npm install -g snyk
+          
+          # Authenticate with Snyk
+          snyk auth $SNYK_TOKEN
+          
+          # Run Snyk test and capture results
+          cd mock-app
+          
+          # Run test and save results (allow failure to capture vulnerabilities)
+          snyk test --json > ../snyk-results.json || true
+          
+          # Parse results for summary
+          echo "Snyk scan completed. Parsing results..."
+          
+          # Extract vulnerability counts
+          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length' ../snyk-results.json)
+          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length' ../snyk-results.json)
+          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length' ../snyk-results.json)
+          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length' ../snyk-results.json)
+          
+          echo "CRITICAL_COUNT=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "HIGH_COUNT=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "MEDIUM_COUNT=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          echo "LOW_COUNT=$LOW_COUNT" >> $GITHUB_OUTPUT
+          
+          # Display summary
+          echo "## Vulnerability Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Critical: $CRITICAL_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- High: $HIGH_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Medium: $MEDIUM_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Low: $LOW_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Upload Snyk results
+        uses: actions/upload-artifact@v3
+        with:
+          name: snyk-results
+          path: snyk-results.json
+          
+  security-gates:
+    name: Security Gate Evaluation
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Download Snyk results
+        uses: actions/download-artifact@v3
+        with:
+          name: snyk-results
+          
+      - name: Start Docker Compose services
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          # Create .env file for Docker Compose
+          cat > .env << EOF
+          PERMIT_API_KEY=$PERMIT_API_KEY
+          SNYK_TOKEN=$SNYK_TOKEN
+          SNYK_ORG_ID=$SNYK_ORG_ID
+          EOF
+          
+          # Start only the PDP and fetcher services
+          docker-compose up -d permit-pdp redis opal-fetcher
+          
+          # Wait for services to be ready
+          echo "Waiting for services to be ready..."
+          sleep 10
+          
+          # Check PDP health
+          curl -f http://localhost:7766/ready || exit 1
+          
+      - name: Evaluate Security Gates
+        id: gate_evaluation
+        run: |
+          # Run gate evaluation script
+          chmod +x scripts/evaluate-gates.sh
+          ./scripts/evaluate-gates.sh snyk-results.json
+          
+          # Capture exit code
+          GATE_RESULT=$?
+          echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
+          
+          # Set job status based on gate result
+          if [ $GATE_RESULT -eq 0 ]; then
+            echo "✅ All security gates passed" >> $GITHUB_STEP_SUMMARY
+          elif [ $GATE_RESULT -eq 1 ]; then
+            echo "⚠️ Soft gate warnings - proceeding with caution" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Hard gate failed - deployment blocked" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+              exit 2
+            else
+              echo "⚠️ Gates overridden by user" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+      - name: Stop Docker Compose services
+        if: always()
+        run: |
+          docker-compose down
+          
+  build-docker-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: security-gates
+    if: success() || (github.event.inputs.override_gates == 'true')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        
+      - name: Build Docker image
+        run: |
+          cd mock-app
+          docker build -t gating-poc-app:${{ github.sha }} .
+          
+      - name: Save Docker image
+        run: |
+          docker save gating-poc-app:${{ github.sha }} > gating-poc-app.tar
+          
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-image
+          path: gating-poc-app.tar
+          
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: build-docker-image
+    if: github.ref == 'refs/heads/main' && (success() || github.event.inputs.override_gates == 'true')
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Download Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: |
+          docker load < gating-poc-app.tar
+          
+      - name: Deploy to environment
+        run: |
+          echo "🚀 Deploying application version ${{ github.sha }}"
+          # Add actual deployment steps here
+          # For PoC, we'll just run the container locally
+          docker run -d -p 8080:8080 --name gating-poc-app gating-poc-app:${{ github.sha }}
+          
+          # Wait for application to start
+          sleep 10
+          
+          # Health check
+          curl -f http://localhost:8080/actuator/health || exit 1
+          
+          echo "✅ Deployment successful" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop gating-poc-app || true
+          docker rm gating-poc-app || true

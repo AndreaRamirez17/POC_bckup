@@ -11,8 +11,33 @@ set -e
 
 # Configuration
 PDP_URL="${PDP_URL:-http://localhost:7001}"
-PERMIT_API_KEY="${PERMIT_API_KEY}"
 SNYK_RESULTS_FILE="${1:-snyk-results.json}"
+
+# Try to load .env file if it exists and PERMIT_API_KEY is not already set
+if [ -z "$PERMIT_API_KEY" ]; then
+    # Get the script's directory
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+    ENV_FILE="${SCRIPT_DIR}/../../.env"
+    
+    if [ -f "$ENV_FILE" ]; then
+        echo "Loading environment variables from .env file..." >&2
+        # Export variables while sourcing
+        set -a
+        source "$ENV_FILE"
+        set +a
+    fi
+fi
+
+# Get the API key from environment
+PERMIT_API_KEY="${PERMIT_API_KEY}"
+
+# Check if PERMIT_API_KEY is set
+if [ -z "$PERMIT_API_KEY" ]; then
+    echo "Error: PERMIT_API_KEY environment variable is not set"
+    echo "Please set it by running: export PERMIT_API_KEY=your_api_key"
+    echo "Or create a .env file in the project root with: PERMIT_API_KEY=your_api_key"
+    exit 2
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -65,20 +90,25 @@ parse_snyk_results() {
     LOW_COUNT=$(jq -r '.vulnerabilities | map(select(.severity == "low")) | length // 0' "$results_file" 2>/dev/null || echo "0")
     TOTAL_COUNT=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
     
-    # Extract vulnerability details with error handling
-    CRITICAL_VULNS=$(jq -c '.vulnerabilities | map(select(.severity == "critical")) | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
-    HIGH_VULNS=$(jq -c '.vulnerabilities | map(select(.severity == "high")) | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
-    MEDIUM_VULNS=$(jq -c '.vulnerabilities | map(select(.severity == "medium")) | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
+    # Extract vulnerability details with error handling (simplified to avoid large payloads)
+    # Limiting to first 5 vulnerabilities of each type to avoid payload size issues
+    CRITICAL_VULNS=$(timeout 5s jq -c '.vulnerabilities | map(select(.severity == "critical")) | .[0:5] | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
+    HIGH_VULNS=$(timeout 5s jq -c '.vulnerabilities | map(select(.severity == "high")) | .[0:5] | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
+    MEDIUM_VULNS=$(timeout 5s jq -c '.vulnerabilities | map(select(.severity == "medium")) | .[0:5] | map({id: .id, title: .title, packageName: .packageName, version: .version})' "$results_file" 2>/dev/null || echo "[]")
 }
 
 # Function to create Permit.io request payload
 create_permit_payload() {
+    # Allow role override via environment variable (default to ci-pipeline)
+    local user_role="${USER_ROLE:-ci-pipeline}"
+    local user_key="${USER_KEY:-github-actions}"
+    
     cat <<EOF
 {
   "user": {
-    "key": "github-actions",
+    "key": "$user_key",
     "attributes": {
-      "role": "ci-pipeline"
+      "role": "$user_role"
     }
   },
   "action": "deploy",
@@ -103,7 +133,7 @@ create_permit_payload() {
         "medium": $MEDIUM_COUNT,
         "low": $LOW_COUNT
       },
-      "scanTimestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      "scanTimestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     }
   },
   "context": {
@@ -120,24 +150,46 @@ EOF
 call_permit_pdp() {
     local payload=$1
     local response
+    local http_status
     
-    print_color "$YELLOW" "Calling Permit.io PDP for gate evaluation..."
+    print_color "$YELLOW" "Calling Permit.io PDP for gate evaluation..." >&2
     
     # Make the API call with timeout and debug output
-    print_color "$YELLOW" "Making PDP call to: ${PDP_URL}/allowed"
+    print_color "$YELLOW" "Making PDP call to: ${PDP_URL}/allowed" >&2
     if [ "${DEBUG:-false}" = "true" ]; then
-        echo "Using API Key: ${PERMIT_API_KEY:0:20}..."
+        echo "Using API Key: ${PERMIT_API_KEY:0:20}..." >&2
     fi
     
-    response=$(timeout 10s curl -X POST \
+    # Use curl with proper options to capture response and status separately
+    response=$(curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${PERMIT_API_KEY}" \
         -d "$payload" \
-        "${PDP_URL}/allowed" 2>&1) || {
-        print_color "$RED" "Error: Failed to call Permit.io PDP"
-        print_color "$RED" "Response: $response"
+        --connect-timeout 5 \
+        --max-time 10 \
+        "${PDP_URL}/allowed" 2>/dev/null)
+    
+    # Extract HTTP status code from the last line
+    http_status=$(echo "$response" | tail -n1)
+    # Extract response body (everything except the last line)
+    response=$(echo "$response" | sed '$d')
+    
+    # Check HTTP status
+    if [ "$http_status" != "200" ]; then
+        print_color "$RED" "Error: PDP returned HTTP status $http_status" >&2
+        if [ "$http_status" = "401" ] || [ "$http_status" = "403" ]; then
+            print_color "$RED" "Authentication failed. Please check your PERMIT_API_KEY" >&2
+        fi
+        print_color "$RED" "Response: $response" >&2
         return 2
-    }
+    fi
+    
+    # Validate JSON response
+    if ! echo "$response" | jq . >/dev/null 2>&1; then
+        print_color "$RED" "Error: Invalid JSON response from PDP" >&2
+        print_color "$RED" "Response: $response" >&2
+        return 2
+    fi
     
     echo "$response"
 }
@@ -146,12 +198,44 @@ call_permit_pdp() {
 evaluate_response() {
     local response=$1
     local allow
-    local decision
+    local decision="UNKNOWN"
     local violations
     
     # Parse response with error handling
     allow=$(echo "$response" | jq -r '.allow // false' 2>/dev/null || echo "false")
-    decision=$(echo "$response" | jq -r '.decision // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    
+    # The PDP doesn't return a 'decision' field, so we need to determine it based on the response
+    # Check if there's a debug field with error codes
+    local error_code=$(echo "$response" | jq -r '.debug.abac.code // .debug.rbac.code // ""' 2>/dev/null || echo "")
+    
+    # Check if user has editor role override
+    local is_editor_override=false
+    if [ "$USER_ROLE" = "editor" ] && [ "$allow" = "true" ]; then
+        is_editor_override=true
+    fi
+    
+    # Determine decision based on allow field and vulnerability counts
+    if [ "$allow" = "true" ]; then
+        if [ "$is_editor_override" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+            decision="EDITOR_OVERRIDE"
+        elif [ "$HIGH_COUNT" -gt 0 ]; then
+            decision="PASS_WITH_WARNINGS"
+        elif [ "$MEDIUM_COUNT" -gt 0 ]; then
+            decision="PASS_WITH_INFO"
+        else
+            decision="PASS"
+        fi
+    else
+        # Check if it's due to critical vulnerabilities
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            decision="FAIL"
+        elif [ -n "$error_code" ]; then
+            # If there's an error code, it means the policy evaluation failed
+            decision="FAIL"
+        else
+            decision="UNKNOWN"
+        fi
+    fi
     violations=$(echo "$response" | jq -r '.violations // []' 2>/dev/null || echo "[]")
     
     # Display results
@@ -178,11 +262,32 @@ evaluate_response() {
             print_color "$GREEN" "🎉 No blocking vulnerabilities found. Deployment can proceed."
             return 0
             ;;
+        "EDITOR_OVERRIDE")
+            print_color "$YELLOW" "🔓 DECISION: EDITOR OVERRIDE - Deployment allowed with editor privileges"
+            echo ""
+            echo "⚠️  Editor Override Active:"
+            echo "   • User Role: editor"
+            echo "   • Critical vulnerabilities present: $CRITICAL_COUNT"
+            echo ""
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                echo "🔴 Critical Vulnerabilities (Editor Override Applied):"
+                echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+                echo ""
+            fi
+            print_color "$YELLOW" "⚡ DEPLOYMENT PROCEEDING: Editor has overridden security gates."
+            echo "   Ensure critical vulnerabilities are addressed post-deployment."
+            return 0
+            ;;
         "PASS_WITH_WARNINGS")
             print_color "$YELLOW" "⚠️  DECISION: PASS WITH WARNINGS - Soft gate triggered"
             echo ""
             echo "📋 Warnings:"
-            echo "$response" | jq -r '.violations[] | "   • \(.message)"'
+            echo "   • $HIGH_COUNT high severity vulnerabilities detected"
+            if [ "$HIGH_COUNT" -gt 0 ]; then
+                echo ""
+                echo "High severity vulnerabilities (showing first 5):"
+                echo "$HIGH_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+            fi
             echo ""
             print_color "$YELLOW" "⚡ High severity vulnerabilities detected. Review recommended before production deployment."
             return 1
@@ -191,7 +296,12 @@ evaluate_response() {
             print_color "$YELLOW" "ℹ️  DECISION: PASS WITH INFO - Informational findings"
             echo ""
             echo "📋 Information:"
-            echo "$response" | jq -r '.violations[] | "   • \(.message)"'
+            echo "   • $MEDIUM_COUNT medium severity vulnerabilities detected"
+            if [ "$MEDIUM_COUNT" -gt 0 ]; then
+                echo ""
+                echo "Medium severity vulnerabilities (showing first 5):"
+                echo "$MEDIUM_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+            fi
             echo ""
             print_color "$YELLOW" "💡 Medium severity vulnerabilities detected. Consider remediation in next maintenance window."
             return 1
@@ -199,21 +309,26 @@ evaluate_response() {
         "FAIL")
             print_color "$RED" "❌ DECISION: FAIL - Hard gate triggered"
             echo ""
-            echo "🚫 Blocking Issues:"
-            echo "$response" | jq -r '.violations[] | "   • \(.message)"'
+            
+            # Display reason from PDP debug information
+            local reason=$(echo "$response" | jq -r '.debug.abac.reason // .debug.rbac.reason // "Policy evaluation failed"' 2>/dev/null || echo "Policy evaluation failed")
+            echo "🚫 Blocking Issue: $reason"
             echo ""
             
             # Display critical vulnerabilities
             if [ "$CRITICAL_COUNT" -gt 0 ]; then
-                echo "🔴 Critical Vulnerabilities Found:"
-                echo "$response" | jq -r '.violations[].vulnerabilities[]? | "   • \(.packageName)@\(.version): \(.title)"'
+                echo "🔴 Critical Vulnerabilities Found ($CRITICAL_COUNT):"
+                # Display the critical vulnerabilities from our parsed data
+                echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
                 echo ""
             fi
             
             print_color "$RED" "🛑 DEPLOYMENT BLOCKED: Critical vulnerabilities must be resolved before deployment."
             echo ""
             echo "📌 Recommendations:"
-            echo "$response" | jq -r '.recommendations[]? | "   • \(.)"'
+            echo "   • Review and fix critical vulnerabilities"
+            echo "   • Update vulnerable dependencies to secure versions"
+            echo "   • Run security scan again after fixes"
             return 2
             ;;
         *)
@@ -234,6 +349,14 @@ main() {
         echo "Running in GitHub Actions environment"
     else
         echo "Running in local environment"
+    fi
+    
+    # Display user context if editor role is being used
+    if [ "$USER_ROLE" = "editor" ]; then
+        print_color "$YELLOW" "🔑 Running with editor role privileges"
+        echo "   User: ${USER_KEY:-github-actions}"
+        echo "   Role: editor"
+        echo ""
     fi
     
     # Check PDP readiness
