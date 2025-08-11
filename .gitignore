@@ -69,3 +69,6 @@ tmp/
 temp/
 *.tmp
 *.temp
+
+# Claude Code files
+.claude/
