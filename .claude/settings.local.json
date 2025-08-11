@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/scripts/validate-snyk.sh)",
+      "Bash(source .env)",
+      "Bash(curl:*)",
+      "Bash(echo)",
+      "Bash(cat:*)",
+      "Bash(./scripts/validate-permit.sh:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/scripts/test-gates-local.sh:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker logs:*)",
+      "Bash(grep:*)",
+      "Bash(mvn clean:*)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,27 @@
+# Snyk Configuration File
+version: v1.0.0
+
+# Language settings
+language-settings:
+  java:
+    enableLinter: true
+
+# Patches to apply
+patches: {}
+
+# Ignore specific vulnerabilities (empty for PoC - we want to detect all)
+ignore: {}
+
+# Custom rules
+custom-rules:
+  - id: critical-severity-check
+    description: Check for critical severity vulnerabilities
+    severity: critical
+    
+  - id: high-severity-check
+    description: Check for high severity vulnerabilities  
+    severity: high
+    
+  - id: medium-severity-check
+    description: Check for medium severity vulnerabilities
+    severity: medium

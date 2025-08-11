@@ -1,0 +1,127 @@
+{
+  "name": "CI/CD Security Gating Policy",
+  "description": "Security gates for CI/CD pipeline based on Snyk vulnerability scanning",
+  "version": "1.0.0",
+  "resources": [
+    {
+      "key": "deployment",
+      "name": "Deployment",
+      "description": "Application deployment resource",
+      "attributes": {
+        "vulnerabilities": {
+          "type": "object",
+          "description": "Vulnerability data from Snyk scan"
+        },
+        "summary": {
+          "type": "object",
+          "description": "Summary of vulnerabilities by severity"
+        },
+        "criticalCount": {
+          "type": "number",
+          "description": "Number of critical vulnerabilities"
+        },
+        "highCount": {
+          "type": "number",
+          "description": "Number of high severity vulnerabilities"
+        },
+        "mediumCount": {
+          "type": "number",
+          "description": "Number of medium severity vulnerabilities"
+        }
+      }
+    }
+  ],
+  "actions": [
+    {
+      "key": "deploy",
+      "name": "Deploy",
+      "description": "Deploy application to environment"
+    },
+    {
+      "key": "promote",
+      "name": "Promote",
+      "description": "Promote application to next environment"
+    }
+  ],
+  "roles": [
+    {
+      "key": "developer",
+      "name": "Developer",
+      "description": "Development team member",
+      "permissions": [
+        {
+          "resource": "deployment",
+          "action": "deploy",
+          "conditions": {
+            "softGateOnly": true
+          }
+        }
+      ]
+    },
+    {
+      "key": "devops",
+      "name": "DevOps Engineer",
+      "description": "DevOps team member",
+      "permissions": [
+        {
+          "resource": "deployment",
+          "action": "deploy"
+        },
+        {
+          "resource": "deployment",
+          "action": "promote"
+        }
+      ]
+    },
+    {
+      "key": "security",
+      "name": "Security Team",
+      "description": "Security team member with override capabilities",
+      "permissions": [
+        {
+          "resource": "deployment",
+          "action": "deploy",
+          "conditions": {
+            "override": true
+          }
+        },
+        {
+          "resource": "deployment",
+          "action": "promote",
+          "conditions": {
+            "override": true
+          }
+        }
+      ]
+    }
+  ],
+  "policies": [
+    {
+      "key": "critical_vulnerability_gate",
+      "name": "Critical Vulnerability Hard Gate",
+      "description": "Blocks deployment if critical vulnerabilities are found",
+      "type": "ENFORCING",
+      "rule": "resource.attributes.criticalCount == 0",
+      "effect": "DENY",
+      "priority": 1
+    },
+    {
+      "key": "high_vulnerability_gate",
+      "name": "High Vulnerability Soft Gate",
+      "description": "Warns about high severity vulnerabilities but allows deployment",
+      "type": "NON_ENFORCING",
+      "rule": "resource.attributes.highCount == 0",
+      "effect": "WARN",
+      "priority": 2
+    },
+    {
+      "key": "medium_vulnerability_info",
+      "name": "Medium Vulnerability Information",
+      "description": "Provides information about medium severity vulnerabilities",
+      "type": "NON_ENFORCING",
+      "rule": "resource.attributes.mediumCount == 0",
+      "effect": "INFO",
+      "priority": 3
+    }
+  ]
+}
