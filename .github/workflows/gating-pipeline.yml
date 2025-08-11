@@ -107,6 +107,11 @@ jobs:
         with:
           name: snyk-results
           
+      - name: Install jq for JSON parsing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          
       - name: Start Docker Compose services
         env:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
@@ -128,14 +133,14 @@ jobs:
           sleep 10
           
           # Check PDP health
-          curl -f http://localhost:7766/ready || exit 1
+          curl -f http://localhost:7001/healthy || exit 1
           
       - name: Evaluate Security Gates
         id: gate_evaluation
         run: |
           # Run gate evaluation script
-          chmod +x scripts/evaluate-gates.sh
-          ./scripts/evaluate-gates.sh snyk-results.json
+          chmod +x gating/scripts/evaluate-gates.sh
+          ./gating/scripts/evaluate-gates.sh snyk-results.json
           
           # Capture exit code
           GATE_RESULT=$?
