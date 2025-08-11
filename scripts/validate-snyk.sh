@@ -188,8 +188,8 @@ test_cli_auth() {
 test_vulnerability_scan() {
     print_color "$YELLOW" "Testing vulnerability scanning..."
     
-    if [ -d "mock-app" ]; then
-        cd mock-app
+    if [ -d "microservice-moc-app" ]; then
+        cd microservice-moc-app
         
         # Run a test scan
         local scan_result=$(snyk test --json 2>/dev/null || echo "scan_failed")
@@ -209,7 +209,7 @@ test_vulnerability_scan() {
         
         cd ..
     else
-        print_color "$YELLOW" "⚠ mock-app directory not found, skipping scan test"
+        print_color "$YELLOW" "⚠ microservice-moc-app directory not found, skipping scan test"
     fi
 }
 

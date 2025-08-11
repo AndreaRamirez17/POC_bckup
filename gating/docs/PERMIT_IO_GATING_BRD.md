@@ -163,7 +163,7 @@ services:
 
   spring-app:
     build:
-      context: ./mock-app
+      context: ./microservice-moc-app
       dockerfile: Dockerfile
     ports:
       - "8080:8080"

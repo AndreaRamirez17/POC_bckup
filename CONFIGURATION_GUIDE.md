@@ -677,7 +677,7 @@ When editor role is active:
      https://api.snyk.io/v1/user/me
 
    # Test local scan
-   cd mock-app
+   cd microservice-moc-app
    snyk test
    ```
 
@@ -792,7 +792,7 @@ snyk monitor
 **Issue: "No vulnerable paths found"**
 ```bash
 # Solution: Ensure you're scanning the right directory
-cd mock-app
+cd microservice-moc-app
 snyk test --all-projects
 ```
 

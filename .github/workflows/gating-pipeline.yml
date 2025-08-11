@@ -46,7 +46,7 @@ jobs:
             
       - name: Build Spring Boot application
         run: |
-          cd mock-app
+          cd microservice-moc-app
           mvn clean compile
           
       - name: Run Snyk security scan
@@ -61,7 +61,7 @@ jobs:
           snyk auth $SNYK_TOKEN
           
           # Run Snyk test and capture results
-          cd mock-app
+          cd microservice-moc-app
           
           # Run test and save results (allow failure to capture vulnerabilities)
           snyk test --json > ../snyk-results.json || true
@@ -180,7 +180,7 @@ jobs:
         
       - name: Build Docker image
         run: |
-          cd mock-app
+          cd microservice-moc-app
           docker build -t gating-poc-app:${{ github.sha }} .
           
       - name: Save Docker image

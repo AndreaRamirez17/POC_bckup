@@ -36,7 +36,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 ## Components
 
 ### 1. Mock Spring Boot Application
-- **Location**: `/mock-app`
+- **Location**: `/microservice-moc-app`
 - **Purpose**: Simulates a real application with intentionally vulnerable dependencies
 - **Vulnerabilities**:
   - **Critical**: Log4j 2.14.1 (CVE-2021-44228)
@@ -129,7 +129,7 @@ docker-compose up -d
 
 ### Run Snyk Scan
 ```bash
-cd mock-app
+cd microservice-moc-app
 mvn clean compile
 snyk test --json > ../snyk-results.json
 cd ..
@@ -280,7 +280,7 @@ cicd-pipeline-poc/
 │   │   └── gating-pipeline.yml     # Gating pipeline workflow
 │   └── docker/                     # Docker configurations
 │       └── docker-compose.gating.yml # Gating services
-├── mock-app/
+├── microservice-moc-app/
 │   ├── src/                        # Spring Boot application source
 │   ├── pom.xml                     # Maven config with vulnerable deps
 │   └── Dockerfile                  # Application container

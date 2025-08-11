@@ -4,7 +4,7 @@ services:
   # Spring Boot Mock Application
   spring-app:
     build:
-      context: ./mock-app
+      context: ./microservice-moc-app
       dockerfile: Dockerfile
     container_name: spring-app
     ports:

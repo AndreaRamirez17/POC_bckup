@@ -76,7 +76,7 @@ check_env_file() {
 build_application() {
     print_color "$BLUE" "Building Spring Boot application..."
     
-    cd mock-app
+    cd microservice-moc-app
     mvn clean package -DskipTests
     cd ..
     
@@ -125,7 +125,7 @@ run_snyk_scan() {
     fi
     
     # Run real Snyk scan (no mock data fallback)
-    cd mock-app
+    cd microservice-moc-app
     if [ -z "$SNYK_TOKEN" ] || [ "$SNYK_TOKEN" = "your_snyk_token_here" ]; then
         print_color "$RED" "Error: SNYK_TOKEN not configured. Real vulnerability scanning required."
         print_color "$RED" "Please set SNYK_TOKEN in .env file to use real Snyk scanning."
