@@ -57,7 +57,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 - **Editor Override**: Allows authorized users to bypass security gates with full audit trail
 - **Role-Based Permissions**: Different access levels (ci-pipeline, editor) with appropriate permissions
 
-### 4. Gate Evaluation Scripts (`gating/scripts/`)
+### 4. Gate Evaluation Scripts (`permit-gating/scripts/`)
 - **evaluate-gates.sh**: Main security gate evaluation script with role-based override support
 - **test-gates-local.sh**: Local testing utility for full pipeline simulation
 - **validate-permit.sh**: Permit.io configuration validation script
@@ -106,11 +106,11 @@ cp .env.example .env || echo "Using existing .env file"
 # USER_KEY=your_editor_user_key
 
 # Validate configurations
-chmod +x scripts/validate-snyk.sh
-./scripts/validate-snyk.sh
+chmod +x snyk-scanning/scripts/validate-snyk.sh
+./snyk-scanning/scripts/validate-snyk.sh
 
-chmod +x gating/scripts/validate-permit.sh  
-./gating/scripts/validate-permit.sh
+chmod +x permit-gating/scripts/validate-permit.sh  
+./permit-gating/scripts/validate-permit.sh
 
 # Note: The validate-permit.sh script will automatically install OPA CLI if needed
 # for policy syntax validation. You can skip the installation when prompted if
@@ -119,8 +119,8 @@ chmod +x gating/scripts/validate-permit.sh
 
 ### 3. Run Local Test
 ```bash
-chmod +x gating/scripts/test-gates-local.sh
-./gating/scripts/test-gates-local.sh
+chmod +x permit-gating/scripts/test-gates-local.sh
+./permit-gating/scripts/test-gates-local.sh
 ```
 
 Select option 1 for a full test run.
@@ -136,13 +136,13 @@ docker-compose up -d
 ```bash
 cd microservice-moc-app
 mvn clean compile
-snyk test --json > ../snyk-results.json
+snyk test --json > ../snyk-scanning/results/snyk-results.json
 cd ..
 ```
 
 ### Evaluate Gates
 ```bash
-./gating/scripts/evaluate-gates.sh snyk-results.json
+./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 ### Expected Results
@@ -162,7 +162,7 @@ To test the editor override functionality:
 # USER_KEY=santander.david.19
 
 # Run the gate evaluation
-./gating/scripts/evaluate-gates.sh snyk-results.json
+./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 **Expected Editor Override Results:**
@@ -220,7 +220,7 @@ Check the Actions tab to see:
 ## Customization
 
 ### Adding New Gates
-Edit `/policies/gating_policy.rego` to add custom rules:
+Edit `permit-gating/policies/gating_policy.rego` to add custom rules:
 ```rego
 custom_gate_fail if {
     input.resource.attributes.customMetric > threshold
@@ -252,7 +252,7 @@ docker-compose logs opal-fetcher
 curl http://localhost:7766/ready
 
 # Test with debug mode
-DEBUG=true ./scripts/evaluate-gates.sh snyk-results.json
+DEBUG=true ./scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 ### Snyk Not Working
@@ -266,7 +266,7 @@ cicd-pipeline-poc/
 ├── .github/
 │   └── workflows/
 │       └── gating-pipeline.yml      # GitHub Actions workflow
-├── gating/                         # Security gating components
+├── permit-gating/                         # Security gating components
 │   ├── docs/                       # Gating documentation
 │   │   ├── README.md               # Gating setup guide
 │   │   └── PERMIT_IO_GATING_BRD.md # Business requirements
@@ -310,11 +310,11 @@ After validating this PoC:
 
 For issues or questions:
 - **Start here**: [Configuration Guide](CONFIGURATION_GUIDE.md) for setup help
-- **Security Gating**: [Gating Documentation](gating/docs/README.md) for gating-specific setup
-- Review the [Business Requirements Document](gating/docs/PERMIT_IO_GATING_BRD.md)  
+- **Security Gating**: [Gating Documentation](permit-gating/docs/README.md) for gating-specific setup
+- Review the [Business Requirements Document](permit-gating/docs/PERMIT_IO_GATING_BRD.md)  
 - Check service logs: `docker-compose logs`
-- Enable debug mode: `DEBUG=true ./gating/scripts/evaluate-gates.sh`
-- Validate your setup: `./scripts/validate-snyk.sh` and `./gating/scripts/validate-permit.sh`
+- Enable debug mode: `DEBUG=true ./permit-gating/scripts/evaluate-gates.sh`
+- Validate your setup: `./snyk-scanning/scripts/validate-snyk.sh` and `./permit-gating/scripts/validate-permit.sh`
 
 ## License
 

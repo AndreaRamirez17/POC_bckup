@@ -5,7 +5,7 @@ This directory contains all Permit.io-based security gating components for the C
 ## Directory Structure
 
 ```
-gating/
+permit-gating/
 ├── docs/                           # Documentation
 │   ├── README.md                   # This file - gating setup guide
 │   └── PERMIT_IO_GATING_BRD.md    # Business requirements document
@@ -42,23 +42,23 @@ gating/
 docker-compose up -d
 
 # Or start only gating services
-cd gating/docker
+cd permit-gating/docker
 docker-compose -f docker-compose.gating.yml up -d
 ```
 
 ### 3. Validate Configuration
 ```bash
 # Validate Permit.io setup
-./gating/scripts/validate-permit.sh
+./permit-gating/scripts/validate-permit.sh
 
 # Test gate evaluation
-./gating/scripts/evaluate-gates.sh snyk-results.json
+./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 ### 4. Run Local Tests
 ```bash
 # Full integration test
-./gating/scripts/test-gates-local.sh
+./permit-gating/scripts/test-gates-local.sh
 ```
 
 ## Core Components
@@ -75,10 +75,10 @@ The main script that evaluates security gates using Permit.io PDP. Features:
 **Usage:**
 ```bash
 # Standard evaluation
-./gating/scripts/evaluate-gates.sh snyk-results.json
+./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 
 # With editor override (configured in .env)
-USER_ROLE=editor USER_KEY=your_editor_user ./gating/scripts/evaluate-gates.sh snyk-results.json
+USER_ROLE=editor USER_KEY=your_editor_user ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 **Exit Codes:**
@@ -180,7 +180,7 @@ curl http://localhost:7001/healthy
 echo $PERMIT_API_KEY | head -c 20
 
 # Run with debug mode
-DEBUG=true ./gating/scripts/evaluate-gates.sh snyk-results.json
+DEBUG=true ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 **Editor override not working:**

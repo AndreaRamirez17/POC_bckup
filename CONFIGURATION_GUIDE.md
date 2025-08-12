@@ -449,7 +449,7 @@ The PoC includes an **Editor Override** feature that allows authorized users to 
 2. **Test Editor Override**
    ```bash
    # Run gate evaluation with editor privileges
-   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
    
    # Expected result: EDITOR_OVERRIDE - Deployment allowed despite critical vulnerabilities
    ```
@@ -668,8 +668,8 @@ When editor role is active:
 
 1. **Create Validation Script**
    ```bash
-   chmod +x scripts/validate-snyk.sh
-   ./scripts/validate-snyk.sh
+   chmod +x snyk-scanning/scripts/validate-snyk.sh
+   ./snyk-scanning/scripts/validate-snyk.sh
    ```
 
 2. **Manual Test**
@@ -687,15 +687,15 @@ When editor role is active:
 
 1. **Run Validation Script**
    ```bash
-   chmod +x gating/scripts/validate-permit.sh
-   ./gating/scripts/validate-permit.sh
+   chmod +x permit-gating/scripts/validate-permit.sh
+   ./permit-gating/scripts/validate-permit.sh
    ```
 
    **Note**: The validation script will:
    - Check Permit.io API connection
    - Verify PDP Docker image availability
    - Test PDP deployment
-   - Validate policy files in `gating/policies/`
+   - Validate policy files in `permit-gating/policies/`
    - Offer to install OPA CLI for policy syntax validation (optional)
 
 2. **Manual PDP Test (Optional)**
@@ -748,7 +748,7 @@ When editor role is active:
    # USER_ROLE=ci-pipeline
    # USER_KEY=github-actions
    
-   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
    # Expected: FAIL - Hard gate triggered (critical vulnerabilities)
    ```
    
@@ -758,7 +758,7 @@ When editor role is active:
    # USER_ROLE=editor
    # USER_KEY=your_editor_user_key
    
-   ./gating/scripts/evaluate-gates.sh snyk-results.json
+   ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
    # Expected: EDITOR_OVERRIDE - Deployment allowed with editor privileges
    ```
    
@@ -837,7 +837,7 @@ curl -X POST https://api.permit.io/v2/sync \
 **Issue: "OPA CLI not available for syntax check"**
 ```bash
 # Solution 1: Run validation script and accept installation when prompted
-./gating/scripts/validate-permit.sh
+./permit-gating/scripts/validate-permit.sh
 # When prompted "Install OPA now? (y/N)", type 'y'
 
 # Solution 2: Manual installation
@@ -851,10 +851,10 @@ export PATH="$HOME/.local/bin:$PATH"
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
 
-**Issue: "Policy files not found in gating/policies/"**
+**Issue: "Policy files not found in permit-gating/policies/"**
 ```bash
 # Solution: Ensure policy files are in correct location
-ls -la gating/policies/
+ls -la permit-gating/policies/
 # Should show: gating_policy.rego and permit_config.json
 
 # If missing, check if they're in a different location
@@ -874,7 +874,7 @@ grep USER_KEY .env
 # Login to Permit.io → User Management → verify user and role
 
 # 3. Test with debug mode
-DEBUG=true ./gating/scripts/evaluate-gates.sh snyk-results.json
+DEBUG=true ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 **Issue: "User does not match any rule"**
@@ -896,7 +896,7 @@ DEBUG=true ./gating/scripts/evaluate-gates.sh snyk-results.json
 # Debug steps:
 echo "USER_ROLE: $USER_ROLE"
 echo "USER_KEY: $USER_KEY"
-./gating/scripts/evaluate-gates.sh snyk-results.json
+./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 **Issue: "Editor override shows but exits with error code"**

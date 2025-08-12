@@ -132,7 +132,7 @@ run_snyk_scan() {
         exit 1
     fi
     
-    snyk test --json > ../snyk-results.json 2>/dev/null || {
+    snyk test --json > ../snyk-scanning/results/snyk-results.json 2>/dev/null || {
         print_color "$YELLOW" "Snyk scan completed with vulnerabilities found (exit code ignored)"
     }
     cd ..
@@ -146,10 +146,10 @@ test_gates() {
     echo ""
     
     # Make the script executable
-    chmod +x gating/scripts/evaluate-gates.sh
+    chmod +x permit-gating/scripts/evaluate-gates.sh
     
     # Run gate evaluation
-    ./gating/scripts/evaluate-gates.sh snyk-results.json
+    ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
     local exit_code=$?
     
     echo ""

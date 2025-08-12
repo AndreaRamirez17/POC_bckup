@@ -5,13 +5,13 @@
          http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.banamex.gating</groupId>
-    <artifactId>gating-poc-app</artifactId>
+    <groupId>com.cicd.pipeline</groupId>
+    <artifactId>cicd-pipeline-poc-app</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
 
-    <name>CI/CD Gating PoC Application</name>
-    <description>Mock Spring Boot application for testing CI/CD gating with vulnerabilities</description>
+    <name>CI/CD Pipeline PoC Application</name>
+    <description>Mock Spring Boot application for testing CI/CD pipeline with vulnerabilities</description>
 
     <parent>
         <groupId>org.springframework.boot</groupId>

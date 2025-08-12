@@ -33,7 +33,7 @@ logs/
 *.log.*
 
 # Test results
-snyk-results.json
+snyk-scanning/results/snyk-results.json
 test-results/
 coverage/
 

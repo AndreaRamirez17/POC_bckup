@@ -1,4 +1,4 @@
-package com.banamex.gating.poc.controller;
+package com.cicd.pipeline.poc.controller;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,7 +17,7 @@ public class HealthController {
         Map<String, Object> response = new HashMap<>();
         response.put("status", "UP");
         response.put("timestamp", LocalDateTime.now());
-        response.put("service", "gating-poc-app");
+        response.put("service", "cicd-pipeline-poc-app");
         response.put("version", "1.0.0");
         return ResponseEntity.ok(response);
     }
@@ -25,8 +25,8 @@ public class HealthController {
     @GetMapping("/info")
     public ResponseEntity<Map<String, Object>> info() {
         Map<String, Object> response = new HashMap<>();
-        response.put("application", "CI/CD Gating PoC");
-        response.put("description", "Mock application with intentional vulnerabilities for testing gates");
+        response.put("application", "CI/CD Pipeline PoC");
+        response.put("description", "Mock application with intentional vulnerabilities for testing CI/CD pipeline gates");
         response.put("vulnerabilities", Map.of(
             "critical", "log4j 2.14.1 (CVE-2021-44228)",
             "high", "commons-collections 3.2.1 (CVE-2015-6420)",

@@ -64,16 +64,16 @@ jobs:
           cd microservice-moc-app
           
           # Run test and save results (allow failure to capture vulnerabilities)
-          snyk test --json > ../snyk-results.json || true
+          snyk test --json > ../snyk-scanning/results/snyk-results.json || true
           
           # Parse results for summary
           echo "Snyk scan completed. Parsing results..."
           
           # Extract vulnerability counts
-          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length' ../snyk-results.json)
-          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length' ../snyk-results.json)
-          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length' ../snyk-results.json)
-          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length' ../snyk-results.json)
+          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length' ../snyk-scanning/results/snyk-results.json)
+          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length' ../snyk-scanning/results/snyk-results.json)
+          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length' ../snyk-scanning/results/snyk-results.json)
+          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length' ../snyk-scanning/results/snyk-results.json)
           
           echo "CRITICAL_COUNT=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
           echo "HIGH_COUNT=$HIGH_COUNT" >> $GITHUB_OUTPUT
@@ -91,7 +91,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: snyk-results
-          path: snyk-results.json
+          path: snyk-scanning/results/snyk-results.json
           
   security-gates:
     name: Security Gate Evaluation
@@ -139,8 +139,8 @@ jobs:
         id: gate_evaluation
         run: |
           # Run gate evaluation script
-          chmod +x gating/scripts/evaluate-gates.sh
-          ./gating/scripts/evaluate-gates.sh snyk-results.json
+          chmod +x permit-gating/scripts/evaluate-gates.sh
+          ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
           
           # Capture exit code
           GATE_RESULT=$?

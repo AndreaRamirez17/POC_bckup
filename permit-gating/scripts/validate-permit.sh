@@ -416,12 +416,12 @@ install_opa() {
 validate_policies() {
     print_color "$YELLOW" "Validating policy files..."
     
-    if [ -f "gating/policies/gating_policy.rego" ]; then
+    if [ -f "permit-gating/policies/gating_policy.rego" ]; then
         print_color "$GREEN" "✓ Found gating_policy.rego"
         
         # Basic syntax check if opa is available
         if command -v opa &> /dev/null; then
-            if opa fmt gating/policies/gating_policy.rego &> /dev/null; then
+            if opa fmt permit-gating/policies/gating_policy.rego &> /dev/null; then
                 print_color "$GREEN" "✓ Policy syntax is valid"
             else
                 print_color "$YELLOW" "⚠ Policy syntax check failed"
@@ -439,7 +439,7 @@ validate_policies() {
             if [[ "$install_choice" =~ ^[Yy]$ ]]; then
                 if install_opa; then
                     # Retry syntax check after installation
-                    if opa fmt gating/policies/gating_policy.rego &> /dev/null; then
+                    if opa fmt permit-gating/policies/gating_policy.rego &> /dev/null; then
                         print_color "$GREEN" "✓ Policy syntax is valid"
                     else
                         print_color "$YELLOW" "⚠ Policy syntax check failed"
@@ -455,11 +455,11 @@ validate_policies() {
         print_color "$YELLOW" "⚠ gating_policy.rego not found"
     fi
     
-    if [ -f "gating/policies/permit_config.json" ]; then
+    if [ -f "permit-gating/policies/permit_config.json" ]; then
         print_color "$GREEN" "✓ Found permit_config.json"
         
         # Basic JSON validation
-        if jq empty gating/policies/permit_config.json &> /dev/null; then
+        if jq empty permit-gating/policies/permit_config.json &> /dev/null; then
             print_color "$GREEN" "✓ JSON configuration is valid"
         else
             print_color "$YELLOW" "⚠ JSON configuration has syntax errors"

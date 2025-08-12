@@ -33,22 +33,22 @@ services:
   # Include gating services from separate compose file
   permit-pdp:
     extends:
-      file: ./gating/docker/docker-compose.gating.yml
+      file: ./permit-gating/docker/docker-compose.gating.yml
       service: permit-pdp
 
   opal-server:
     extends:
-      file: ./gating/docker/docker-compose.gating.yml
+      file: ./permit-gating/docker/docker-compose.gating.yml
       service: opal-server
 
   redis:
     extends:
-      file: ./gating/docker/docker-compose.gating.yml
+      file: ./permit-gating/docker/docker-compose.gating.yml
       service: redis
 
   opal-fetcher:
     extends:
-      file: ./gating/docker/docker-compose.gating.yml
+      file: ./permit-gating/docker/docker-compose.gating.yml
       service: opal-fetcher
 
 networks:

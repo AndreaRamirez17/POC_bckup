@@ -27,7 +27,14 @@
       "Bash(echo \"Exit code: $?\")",
       "Bash(./gating/scripts/validate-permit.sh:*)",
       "Bash(git add:*)",
-      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/gating/scripts/validate-permit.sh:*)"
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/gating/scripts/validate-permit.sh:*)",
+      "Bash(./snyk-scanning/scripts/validate-snyk.sh:*)",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/gating/scripts/test-gates-local.sh)",
+      "Bash(./permit-gating/scripts/validate-permit.sh:*)",
+      "Bash(timeout:*)",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/snyk-scanning/scripts/validate-snyk.sh)",
+      "Bash(snyk test:*)",
+      "Bash(git commit:*)"
     ],
     "deny": []
   }

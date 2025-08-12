@@ -28,10 +28,21 @@ print_header() {
 
 # Check if .env file exists and load it
 load_environment() {
+    # Look for .env file in multiple possible locations
+    local env_file=""
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(cd "$script_dir/../.." && pwd)"
+    
     if [ -f .env ]; then
+        env_file=".env"
+    elif [ -f "$project_root/.env" ]; then
+        env_file="$project_root/.env"
+    fi
+    
+    if [ -n "$env_file" ]; then
         print_color "$GREEN" "✓ Found .env file"
         set -a
-        source .env
+        source "$env_file"
         set +a
     else
         print_color "$RED" "✗ .env file not found"
@@ -188,15 +199,19 @@ test_cli_auth() {
 test_vulnerability_scan() {
     print_color "$YELLOW" "Testing vulnerability scanning..."
     
-    if [ -d "microservice-moc-app" ]; then
-        cd microservice-moc-app
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(cd "$script_dir/../.." && pwd)"
+    local app_dir="$project_root/microservice-moc-app"
+    
+    if [ -d "$app_dir" ]; then
+        cd "$app_dir"
         
-        # Run a test scan
-        local scan_result=$(snyk test --json 2>/dev/null || echo "scan_failed")
+        # Run a test scan (Snyk exits with non-zero when vulnerabilities are found)
+        local scan_result=$(snyk test --json 2>/dev/null; true)
         
-        if [ "$scan_result" != "scan_failed" ]; then
+        if [ -n "$scan_result" ]; then
             local vuln_count=$(echo "$scan_result" | jq '.vulnerabilities | length' 2>/dev/null || echo "0")
-            if [ "$vuln_count" != "0" ] && [ "$vuln_count" -gt 0 ] 2>/dev/null; then
+            if [ "$vuln_count" -gt 0 ] 2>/dev/null; then
                 print_color "$GREEN" "✓ Vulnerability scanning working"
                 print_color "$GREEN" "  Found $vuln_count vulnerabilities (expected for PoC)"
             else
@@ -207,7 +222,7 @@ test_vulnerability_scan() {
             echo "Try running 'mvn compile' first"
         fi
         
-        cd ..
+        cd "$script_dir"
     else
         print_color "$YELLOW" "⚠ microservice-moc-app directory not found, skipping scan test"
     fi
@@ -226,7 +241,7 @@ generate_report() {
     echo "Your Snyk configuration is ready for the CI/CD Security Gating PoC."
     echo ""
     echo "Next steps:"
-    echo "  1. Run the full PoC test: ./scripts/test-gates-local.sh"
+    echo "  1. Run the full PoC test: ./permit-gating/scripts/test-gates-local.sh"
     echo "  2. Configure Permit.io (see CONFIGURATION_GUIDE.md)"
     echo "  3. Set up GitHub Actions secrets for CI/CD"
     echo ""
