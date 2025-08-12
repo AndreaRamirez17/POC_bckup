@@ -208,17 +208,11 @@ evaluate_response() {
     # Check if there's a debug field with error codes
     local error_code=$(echo "$response" | jq -r '.debug.abac.code // .debug.rbac.code // ""' 2>/dev/null || echo "")
     
-    # Check if user has editor role override
-    local is_editor_override=false
-    if [ "$USER_ROLE" = "editor" ] && [ "$allow" = "true" ]; then
-        is_editor_override=true
-    fi
+    # Note: Removed editor override logic to show true PDP decisions for audit clarity
     
     # Determine decision based on allow field and vulnerability counts
     if [ "$allow" = "true" ]; then
-        if [ "$is_editor_override" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
-            decision="EDITOR_OVERRIDE"
-        elif [ "$HIGH_COUNT" -gt 0 ]; then
+        if [ "$HIGH_COUNT" -gt 0 ]; then
             decision="PASS_WITH_WARNINGS"
         elif [ "$MEDIUM_COUNT" -gt 0 ]; then
             decision="PASS_WITH_INFO"
@@ -259,23 +253,24 @@ evaluate_response() {
         "PASS")
             print_color "$GREEN" "✅ DECISION: PASS - All security gates passed"
             echo ""
-            print_color "$GREEN" "🎉 No blocking vulnerabilities found. Deployment can proceed."
-            return 0
-            ;;
-        "EDITOR_OVERRIDE")
-            print_color "$YELLOW" "🔓 DECISION: EDITOR OVERRIDE - Deployment allowed with editor privileges"
-            echo ""
-            echo "⚠️  Editor Override Active:"
-            echo "   • User Role: editor"
-            echo "   • Critical vulnerabilities present: $CRITICAL_COUNT"
-            echo ""
-            if [ "$CRITICAL_COUNT" -gt 0 ]; then
-                echo "🔴 Critical Vulnerabilities (Editor Override Applied):"
-                echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+            
+            # Show context if editor role allowed deployment despite critical vulnerabilities
+            if [ "$USER_ROLE" = "editor" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+                print_color "$YELLOW" "🔑 Editor Role Context:"
+                echo "   • User: ${USER_KEY}"
+                echo "   • Role: ${USER_ROLE}" 
+                echo "   • Critical vulnerabilities present: $CRITICAL_COUNT"
+                echo "   • Permit.io policy allowed deployment based on editor permissions"
                 echo ""
+                if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                    echo "🔴 Critical Vulnerabilities (Allowed by Policy):"
+                    echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+                    echo ""
+                fi
+                print_color "$GREEN" "🎉 Deployment authorized by Permit.io policy. Proceed with caution."
+            else
+                print_color "$GREEN" "🎉 No blocking vulnerabilities found. Deployment can proceed."
             fi
-            print_color "$YELLOW" "⚡ DEPLOYMENT PROCEEDING: Editor has overridden security gates."
-            echo "   Ensure critical vulnerabilities are addressed post-deployment."
             return 0
             ;;
         "PASS_WITH_WARNINGS")
