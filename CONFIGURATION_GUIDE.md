@@ -19,6 +19,8 @@ Before starting, ensure you have:
 - An email address for service registrations
 - Basic familiarity with CLI tools
 - Docker Desktop installed and running
+- curl command available (for API testing)
+- Optional: OPA CLI for policy validation (auto-installed by validation script)
 
 ---
 
@@ -683,7 +685,20 @@ When editor role is active:
 
 ### Step 2: Validate Permit.io Configuration
 
-1. **Test PDP Connection**
+1. **Run Validation Script**
+   ```bash
+   chmod +x gating/scripts/validate-permit.sh
+   ./gating/scripts/validate-permit.sh
+   ```
+
+   **Note**: The validation script will:
+   - Check Permit.io API connection
+   - Verify PDP Docker image availability
+   - Test PDP deployment
+   - Validate policy files in `gating/policies/`
+   - Offer to install OPA CLI for policy syntax validation (optional)
+
+2. **Manual PDP Test (Optional)**
    ```bash
    # Check PDP health
    curl http://localhost:7766/ready
@@ -817,6 +832,33 @@ echo $PERMIT_API_KEY | head -c 20
 # Solution: Sync policies
 curl -X POST https://api.permit.io/v2/sync \
   -H "Authorization: Bearer $PERMIT_API_KEY"
+```
+
+**Issue: "OPA CLI not available for syntax check"**
+```bash
+# Solution 1: Run validation script and accept installation when prompted
+./gating/scripts/validate-permit.sh
+# When prompted "Install OPA now? (y/N)", type 'y'
+
+# Solution 2: Manual installation
+curl -L -o opa https://github.com/open-policy-agent/opa/releases/download/v0.68.0/opa_linux_amd64_static
+chmod +x opa
+mkdir -p ~/.local/bin
+mv opa ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"
+
+# Add to ~/.bashrc for permanent access
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+```
+
+**Issue: "Policy files not found in gating/policies/"**
+```bash
+# Solution: Ensure policy files are in correct location
+ls -la gating/policies/
+# Should show: gating_policy.rego and permit_config.json
+
+# If missing, check if they're in a different location
+find . -name "*.rego" -o -name "permit_config.json"
 ```
 
 ### Common Editor Override Issues

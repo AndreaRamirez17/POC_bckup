@@ -76,6 +76,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 - Git
 - **Permit.io account and API key** ([Configuration Guide](CONFIGURATION_GUIDE.md))
 - **Snyk account and API token** ([Configuration Guide](CONFIGURATION_GUIDE.md))
+- **OPA CLI** (Optional - automatically installed for policy validation)
 
 ## Quick Start
 
@@ -110,6 +111,10 @@ chmod +x scripts/validate-snyk.sh
 
 chmod +x gating/scripts/validate-permit.sh  
 ./gating/scripts/validate-permit.sh
+
+# Note: The validate-permit.sh script will automatically install OPA CLI if needed
+# for policy syntax validation. You can skip the installation when prompted if
+# you don't need syntax checking (the policies will still work with Permit.io PDP)
 ```
 
 ### 3. Run Local Test

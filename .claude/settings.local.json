@@ -26,7 +26,8 @@
       "Bash(./gating/scripts/evaluate-gates.sh:*)",
       "Bash(echo \"Exit code: $?\")",
       "Bash(./gating/scripts/validate-permit.sh:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/gating/scripts/validate-permit.sh:*)"
     ],
     "deny": []
   }
