@@ -120,6 +120,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: snyk-results
+          path: snyk-scanning/results
           
       - name: Install jq for JSON parsing
         run: |
