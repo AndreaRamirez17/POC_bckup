@@ -34,7 +34,8 @@
       "Bash(timeout:*)",
       "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/snyk-scanning/scripts/validate-snyk.sh)",
       "Bash(snyk test:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(unzip:*)"
     ],
     "deny": []
   }
