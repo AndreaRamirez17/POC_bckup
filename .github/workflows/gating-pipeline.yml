@@ -15,6 +15,16 @@ on:
         options:
           - 'false'
           - 'true'
+      user_role:
+        description: 'User role for testing (configure in Permit.io)'
+        required: false
+        default: 'ci-pipeline'
+        type: choice
+        options:
+          - 'ci-pipeline'
+          - 'developer'
+          - 'editor'
+          - 'security-admin'
 
 env:
   JAVA_VERSION: '11'
@@ -178,7 +188,10 @@ jobs:
         env:
           PDP_URL: ${{ env.PDP_URL }}
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          USER_KEY: ${{ github.actor }}  # Pass the actual GitHub user who triggered the workflow
+          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Use input role or default to editor for testing
         run: |
+          echo "🔐 Evaluating security gates for user: ${{ github.actor }} with role: ${USER_ROLE}"
           # Run gate evaluation script with proper environment
           chmod +x permit-gating/scripts/evaluate-gates.sh
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
