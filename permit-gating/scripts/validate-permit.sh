@@ -26,7 +26,7 @@ print_header() {
     echo ""
 }
 
-# Check if .env file exists and load it
+# Check if .env file exists and load it, or use environment variables
 load_environment() {
     if [ -f .env ]; then
         print_color "$GREEN" "✓ Found .env file"
@@ -34,10 +34,16 @@ load_environment() {
         source .env
         set +a
     else
-        print_color "$RED" "✗ .env file not found"
-        echo "Please create a .env file with your Permit.io credentials"
-        echo "Copy .env.example and fill in your values"
-        exit 1
+        # Check if required environment variables are already set (CI environment)
+        if [ -n "$PERMIT_API_KEY" ]; then
+            print_color "$GREEN" "✓ Using environment variables (CI mode)"
+        else
+            print_color "$RED" "✗ .env file not found and PERMIT_API_KEY environment variable not set"
+            echo "Please either:"
+            echo "  1. Create a .env file with your Permit.io credentials"
+            echo "  2. Set PERMIT_API_KEY environment variable"
+            exit 1
+        fi
     fi
 }
 

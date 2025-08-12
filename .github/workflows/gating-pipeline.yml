@@ -20,6 +20,7 @@ env:
   JAVA_VERSION: '11'
   MAVEN_VERSION: '3.8.6'
   DOCKER_BUILDKIT: 1
+  PDP_URL: http://localhost:7766
 
 jobs:
   build-and-scan:
@@ -49,16 +50,29 @@ jobs:
           cd microservice-moc-app
           mvn clean compile
           
+      - name: Validate Snyk configuration
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x snyk-scanning/scripts/validate-snyk.sh
+          ./snyk-scanning/scripts/validate-snyk.sh
+
       - name: Run Snyk security scan
         id: snyk_scan
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
         run: |
           # Install Snyk CLI
           npm install -g snyk
           
           # Authenticate with Snyk
           snyk auth $SNYK_TOKEN
+          
+          # Ensure results directory exists
+          mkdir -p snyk-scanning/results
           
           # Run Snyk test and capture results
           cd microservice-moc-app
@@ -69,11 +83,11 @@ jobs:
           # Parse results for summary
           echo "Snyk scan completed. Parsing results..."
           
-          # Extract vulnerability counts
-          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length' ../snyk-scanning/results/snyk-results.json)
-          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length' ../snyk-scanning/results/snyk-results.json)
-          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length' ../snyk-scanning/results/snyk-results.json)
-          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length' ../snyk-scanning/results/snyk-results.json)
+          # Extract vulnerability counts with better error handling
+          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length // 0' ../snyk-scanning/results/snyk-results.json)
           
           echo "CRITICAL_COUNT=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
           echo "HIGH_COUNT=$HIGH_COUNT" >> $GITHUB_OUTPUT
@@ -112,33 +126,59 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
           
+      - name: Validate Permit.io configuration
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x permit-gating/scripts/validate-permit.sh
+          ./permit-gating/scripts/validate-permit.sh
+
       - name: Start Docker Compose services
         env:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
         run: |
-          # Create .env file for Docker Compose
+          # Create .env file only for Docker Compose (required by docker-compose.yml)
           cat > .env << EOF
           PERMIT_API_KEY=$PERMIT_API_KEY
           SNYK_TOKEN=$SNYK_TOKEN
           SNYK_ORG_ID=$SNYK_ORG_ID
           EOF
           
-          # Start only the PDP and fetcher services
-          docker-compose up -d permit-pdp redis opal-fetcher
+          # Start Docker Compose services
+          docker-compose up -d --build
           
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 10
+          # Wait for services to be ready with better health checks
+          echo "Waiting for services to start..."
+          sleep 15
           
-          # Check PDP health
-          curl -f http://localhost:7001/healthy || exit 1
+          # Check service health using multiple endpoints like the working scripts
+          echo "Checking service health..."
+          
+          # Check PDP health on correct port
+          for i in {1..10}; do
+            if curl -sf http://localhost:7766/healthy > /dev/null 2>&1; then
+              echo "✓ PDP is ready"
+              break
+            elif [ $i -eq 10 ]; then
+              echo "✗ PDP failed to become ready"
+              docker-compose logs permit-pdp
+              exit 1
+            else
+              echo "Attempt $i/10: PDP not ready yet..."
+              sleep 3
+            fi
+          done
           
       - name: Evaluate Security Gates
         id: gate_evaluation
+        env:
+          PDP_URL: ${{ env.PDP_URL }}
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
         run: |
-          # Run gate evaluation script
+          # Run gate evaluation script with proper environment
           chmod +x permit-gating/scripts/evaluate-gates.sh
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
           
@@ -146,19 +186,30 @@ jobs:
           GATE_RESULT=$?
           echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
           
-          # Set job status based on gate result
-          if [ $GATE_RESULT -eq 0 ]; then
-            echo "✅ All security gates passed" >> $GITHUB_STEP_SUMMARY
-          elif [ $GATE_RESULT -eq 1 ]; then
-            echo "⚠️ Soft gate warnings - proceeding with caution" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "❌ Hard gate failed - deployment blocked" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+          # Set job status based on gate result with enhanced messaging
+          case $GATE_RESULT in
+            0)
+              echo "✅ All security gates passed" >> $GITHUB_STEP_SUMMARY
+              echo "🎉 No blocking vulnerabilities found. Deployment can proceed." >> $GITHUB_STEP_SUMMARY
+              ;;
+            1)
+              echo "⚠️ Soft gate warnings - proceeding with caution" >> $GITHUB_STEP_SUMMARY
+              echo "📋 Non-blocking vulnerabilities detected. Review recommended." >> $GITHUB_STEP_SUMMARY
+              ;;
+            2)
+              echo "❌ Hard gate failed - deployment blocked" >> $GITHUB_STEP_SUMMARY
+              echo "🛑 Critical vulnerabilities must be resolved before deployment." >> $GITHUB_STEP_SUMMARY
+              if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+                exit 2
+              else
+                echo "⚠️ Gates overridden by user" >> $GITHUB_STEP_SUMMARY
+              fi
+              ;;
+            *)
+              echo "❓ Unexpected gate evaluation result (exit code: $GATE_RESULT)" >> $GITHUB_STEP_SUMMARY
               exit 2
-            else
-              echo "⚠️ Gates overridden by user" >> $GITHUB_STEP_SUMMARY
-            fi
-          fi
+              ;;
+          esac
           
       - name: Stop Docker Compose services
         if: always()

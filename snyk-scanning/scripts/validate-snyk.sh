@@ -26,7 +26,7 @@ print_header() {
     echo ""
 }
 
-# Check if .env file exists and load it
+# Check if .env file exists and load it, or use environment variables
 load_environment() {
     # Look for .env file in multiple possible locations
     local env_file=""
@@ -45,10 +45,16 @@ load_environment() {
         source "$env_file"
         set +a
     else
-        print_color "$RED" "✗ .env file not found"
-        echo "Please create a .env file with your Snyk credentials"
-        echo "Copy .env.example and fill in your values"
-        exit 1
+        # Check if required environment variables are already set (CI environment)
+        if [ -n "$SNYK_TOKEN" ] && [ -n "$SNYK_ORG_ID" ]; then
+            print_color "$GREEN" "✓ Using environment variables (CI mode)"
+        else
+            print_color "$RED" "✗ .env file not found and required environment variables not set"
+            echo "Please either:"
+            echo "  1. Create a .env file with your Snyk credentials"
+            echo "  2. Set SNYK_TOKEN and SNYK_ORG_ID environment variables"
+            exit 1
+        fi
     fi
 }
 
