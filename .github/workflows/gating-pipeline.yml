@@ -219,10 +219,12 @@ jobs:
             0)
               echo "✅ All security gates passed" >> $GITHUB_STEP_SUMMARY
               echo "🎉 No blocking vulnerabilities found. Deployment can proceed." >> $GITHUB_STEP_SUMMARY
+              exit 0
               ;;
             1)
               echo "⚠️ Soft gate warnings - proceeding with caution" >> $GITHUB_STEP_SUMMARY
               echo "📋 Non-blocking vulnerabilities detected. Review recommended." >> $GITHUB_STEP_SUMMARY
+              exit 0  # Treat soft gate warnings as success to continue pipeline
               ;;
             2)
               echo "❌ Hard gate failed - deployment blocked" >> $GITHUB_STEP_SUMMARY
@@ -231,6 +233,7 @@ jobs:
                 exit 2
               else
                 echo "⚠️ Gates overridden by user" >> $GITHUB_STEP_SUMMARY
+                exit 0  # Override allows pipeline to continue
               fi
               ;;
             *)
