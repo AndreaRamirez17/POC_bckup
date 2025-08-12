@@ -35,7 +35,10 @@
       "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/snyk-scanning/scripts/validate-snyk.sh)",
       "Bash(snyk test:*)",
       "Bash(git commit:*)",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(bash:*)",
+      "Bash(./evaluate-gates.sh:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }
