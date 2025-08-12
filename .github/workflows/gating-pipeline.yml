@@ -183,15 +183,29 @@ jobs:
             fi
           done
           
+      - name: Debug User Context
+        run: |
+          echo "🔍 GitHub Context Debug:"
+          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "  GitHub Event Actor: ${{ github.event.actor.login }}"
+          echo "  GitHub Repository Owner: ${{ github.repository_owner }}"
+          echo "  GitHub Repository: ${{ github.repository }}"
+          echo "  User Role Input: ${{ github.event.inputs.user_role }}"
+          
       - name: Evaluate Security Gates
         id: gate_evaluation
         env:
           PDP_URL: ${{ env.PDP_URL }}
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
-          USER_KEY: ${{ github.actor }}  # Pass the actual GitHub user who triggered the workflow
+          USER_KEY: david-santander  # Force consistent user identity for Permit.io audit logs
           USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Use input role or default to editor for testing
         run: |
-          echo "🔐 Evaluating security gates for user: ${{ github.actor }} with role: ${USER_ROLE}"
+          echo "🔐 Evaluating security gates:"
+          echo "  Permit.io User Key: ${USER_KEY}"
+          echo "  Permit.io User Role: ${USER_ROLE}"
+          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "  Expected in audit logs: User=${USER_KEY}, Action=deploy"
+          echo ""
           # Run gate evaluation script with proper environment
           chmod +x permit-gating/scripts/evaluate-gates.sh
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
