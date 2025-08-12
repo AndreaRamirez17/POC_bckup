@@ -27,7 +27,7 @@ WORKDIR /app
 RUN mkdir -p /app/logs && chown -R appuser:appuser /app
 
 # Copy JAR from builder stage
-COPY --from=builder /app/target/gating-poc-app-*.jar app.jar
+COPY --from=builder /app/target/cicd-pipeline-poc-app-*.jar app.jar
 
 # Switch to non-root user
 USER appuser
