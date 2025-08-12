@@ -148,7 +148,7 @@ jobs:
           EOF
           
           # Start Docker Compose services
-          docker-compose up -d --build
+          docker compose up -d --build
           
           # Wait for services to be ready with better health checks
           echo "Waiting for services to start..."
@@ -164,7 +164,7 @@ jobs:
               break
             elif [ $i -eq 10 ]; then
               echo "✗ PDP failed to become ready"
-              docker-compose logs permit-pdp
+              docker compose logs permit-pdp
               exit 1
             else
               echo "Attempt $i/10: PDP not ready yet..."
@@ -214,7 +214,7 @@ jobs:
       - name: Stop Docker Compose services
         if: always()
         run: |
-          docker-compose down
+          docker compose down
           
   build-docker-image:
     name: Build Docker Image
