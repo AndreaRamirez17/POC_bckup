@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Maven Cache
-        uses: actions/cache@4.2.2
+        uses: actions/cache@4.2.4
         with:
           path: ~/.m2/repository
           key: buildCache
