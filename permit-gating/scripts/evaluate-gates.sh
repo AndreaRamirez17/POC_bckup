@@ -10,7 +10,7 @@
 set -e
 
 # Configuration
-PDP_URL="${PDP_URL:-http://localhost:7001}"
+PDP_URL="${PDP_URL:-http://localhost:7766}"
 SNYK_RESULTS_FILE="${1:-snyk-scanning/results/snyk-results.json}"
 
 # Try to load .env file if it exists and PERMIT_API_KEY is not already set
