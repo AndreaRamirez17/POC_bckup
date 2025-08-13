@@ -84,7 +84,7 @@ jobs:
         id: build-image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./microservice-moc-app/
           file: ${{ env.DOCKERFILE_PATH }}
           push: false # Only build locally
           load: true  # Load image from Docker
