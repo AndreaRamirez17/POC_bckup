@@ -208,11 +208,17 @@ jobs:
           echo ""
           # Run gate evaluation script with proper environment
           chmod +x permit-gating/scripts/evaluate-gates.sh
+          
+          # Disable exit on error temporarily to capture exit code
+          set +e
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
           
           # Capture exit code
           GATE_RESULT=$?
           echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
+          
+          # Re-enable exit on error
+          set -e
           
           # Set job status based on gate result with enhanced messaging
           case $GATE_RESULT in
