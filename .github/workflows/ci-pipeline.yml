@@ -9,7 +9,7 @@ env:
   # Define common environment variables
   JAVA_VERSION: 11
   PROJECT_NAME: 'gating-poc-app'
-  DOCKERFILE_PATH: 'microservice-moc-app/Dockerfiel'
+  DOCKERFILE_PATH: 'microservice-moc-app/Dockerfile'
 
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
