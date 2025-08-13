@@ -9,7 +9,7 @@ env:
   # Define common environment variables
   JAVA_VERSION: 11
   PROJECT_NAME: 'gating-poc-app'
-  DOCKERFILE_PATH: 'microservice-moc-app'
+  DOCKERFILE_PATH: 'microservice-moc-app/Dockerfiel'
 
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
@@ -18,7 +18,7 @@ jobs:
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
-      #docker_image_tag: $ { { steps.get-tag-name.outputs.docker_tag }}
+      docker_image_tag: ${{ steps.get-tag-name.outputs.docker_tag }}
 
     steps:
       - name: Checkout Code
@@ -31,12 +31,6 @@ jobs:
             java-version: ${{ env.JAVA_VERSION }}
             
       
-      #- name: Cache Maven Dependencies
-      #  uses: actions/cache@4
-      #  with:
-      #    path: ~/.m2/repository
-      #    key: build-maven-cache
-
       - name: Cache Maven dependencies
         uses: actions/cache@v4.2.4
         with:
@@ -82,3 +76,29 @@ jobs:
           name: ${{env.PROJECT_NAME}}-jar
           path: microservice-moc-app/target/${{ steps.get-jar-name.outputs.jar_name}}
           retention-days: 7
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-build-action@v3
+
+      - name: Build Docker Image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: false # Only build locally
+          load: true  # Load image from Docker
+          tags: ${{ env.PROJECT_NAME }}:${{ github.sha }}
+          #target: production
+
+      - name: Get Docker Tag Name
+        id: get-tag-name
+        run: |
+          TAG_NAME="${{ env.PROJECT_NAME}}:${{ github.sha }}"
+          echo "docker_tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME is $TAG_NAME"
+
+      - name: List Docker Images
+        run: docker images
+          
+        
