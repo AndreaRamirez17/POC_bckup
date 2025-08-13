@@ -69,6 +69,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: ${{ success() }}
         with:
-          name: ${{env.PROJECT+NAME}}-jar
+          name: ${{env.PROJECT_NAME}}-jar
           path: target/${{ steps.get-jar-name.outputs.jar_name}}
           retention-days: 7
