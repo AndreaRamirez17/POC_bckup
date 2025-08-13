@@ -111,11 +111,75 @@ jobs:
           echo "- Medium: $MEDIUM_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "- Low: $LOW_COUNT" >> $GITHUB_STEP_SUMMARY
           
+      - name: Send results to Snyk UI (Monitor)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          # Send results to Snyk dashboard with project name
+          echo "📤 Sending scan results to Snyk dashboard..."
+          snyk monitor --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Snyk Dashboard" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Dependency scan results sent to [Snyk Dashboard](https://app.snyk.io)" >> $GITHUB_STEP_SUMMARY
+          echo "Project: cicd-pipeline-poc/microservice-moc-app-deps" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Run Snyk Code Analysis (SAST)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          echo "🔍 Running Snyk Code analysis for security issues in source code..."
+          
+          # Run Snyk Code test (SAST) - this doesn't affect our JSON file
+          snyk code test --json > ../snyk-scanning/results/snyk-code-results.json || true
+          
+          # Parse SAST results for summary
+          if [ -f "../snyk-scanning/results/snyk-code-results.json" ]; then
+            SAST_HIGH=$(jq '.runs[0].results | map(select(.level == "error")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            SAST_MEDIUM=$(jq '.runs[0].results | map(select(.level == "warning")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            SAST_LOW=$(jq '.runs[0].results | map(select(.level == "note")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔒 Code Security Analysis (SAST)" >> $GITHUB_STEP_SUMMARY
+            echo "- High: $SAST_HIGH" >> $GITHUB_STEP_SUMMARY
+            echo "- Medium: $SAST_MEDIUM" >> $GITHUB_STEP_SUMMARY
+            echo "- Low: $SAST_LOW" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Build and scan Docker image
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Build Docker image
+          cd microservice-moc-app
+          docker build -t cicd-poc-app:scan .
+          
+          # Scan Docker image with Snyk
+          echo "🐳 Scanning Docker image for vulnerabilities..."
+          snyk container test cicd-poc-app:scan --json > ../snyk-scanning/results/snyk-container-results.json || true
+          
+          # Send container results to Snyk UI
+          snyk container monitor cicd-poc-app:scan --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Container Security" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Container scan results sent to [Snyk Dashboard](https://app.snyk.io)" >> $GITHUB_STEP_SUMMARY
+          echo "Project: cicd-pipeline-poc/microservice-moc-app-container" >> $GITHUB_STEP_SUMMARY
+          
       - name: Upload Snyk results
         uses: actions/upload-artifact@v4
         with:
           name: snyk-results
-          path: snyk-scanning/results/snyk-results.json
+          path: |
+            snyk-scanning/results/snyk-results.json
+            snyk-scanning/results/snyk-code-results.json
+            snyk-scanning/results/snyk-container-results.json
           
   security-gates:
     name: Security Gate Evaluation
