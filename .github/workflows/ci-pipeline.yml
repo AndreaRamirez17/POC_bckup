@@ -41,6 +41,12 @@ jobs:
       - name: Build Maven Project and Get Jar Name
         id: get-jar-name
         run: |
+          echo "See current directory" 
+          ls -la
+          pwd
+          cd microservice-moc-app
+          pwd
+          ls -la
           # Build without run the tests. The test will be executed in the next step
           mvn clean package -DskipTests
           JAR_NAME=$(ls target/*.jar | head -n 1 | xargs -n 1 basename )
