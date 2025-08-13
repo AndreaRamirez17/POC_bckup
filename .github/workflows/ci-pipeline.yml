@@ -80,5 +80,5 @@ jobs:
         if: ${{ success() }}
         with:
           name: ${{env.PROJECT_NAME}}-jar
-          path: target/${{ steps.get-jar-name.outputs.jar_name}}
+          path: microservice-moc-app/target/${{ steps.get-jar-name.outputs.jar_name}}
           retention-days: 7
