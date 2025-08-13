@@ -208,6 +208,20 @@ jobs:
             fi
           done
           
+          # Test network connectivity to Permit.io cloud
+          echo "Testing connectivity to Permit.io cloud..."
+          if curl -sf -o /dev/null -w "%{http_code}" https://api.permit.io/v2/projects \
+             -H "Authorization: Bearer $PERMIT_API_KEY" | grep -q "200"; then
+            echo "✓ Successfully connected to Permit.io cloud API"
+          else
+            echo "⚠️ Could not verify connection to Permit.io cloud"
+            echo "  This may affect audit logging"
+          fi
+          
+          # Check PDP container logs for any connection issues
+          echo "Checking PDP container status..."
+          docker compose exec -T permit-pdp wget -q -O - http://localhost:7001/healthy || echo "PDP health check status: $?"
+          
       - name: Debug User Context
         run: |
           echo "🔍 GitHub Context Debug:"
@@ -244,6 +258,14 @@ jobs:
           
           # Re-enable exit on error
           set -e
+          
+          # Wait for audit logs to be sent to Permit.io cloud
+          echo "Waiting for audit logs to be sent to Permit.io..."
+          sleep 10
+          
+          # Check PDP logs for audit log confirmation
+          echo "Checking PDP logs for audit activity..."
+          docker compose logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found in recent logs"
           
           # Set job status based on gate result with enhanced messaging
           case $GATE_RESULT in
