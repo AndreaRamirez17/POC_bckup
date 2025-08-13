@@ -167,7 +167,7 @@ jobs:
           
           # Wait for services to be ready with better health checks
           echo "Waiting for services to start..."
-          sleep 15
+          sleep 30  # Increased from 15 to 30 seconds for better sync
           
           # Check service health using multiple endpoints like the working scripts
           echo "Checking service health..."
@@ -175,7 +175,7 @@ jobs:
           # Check PDP health on correct port
           for i in {1..10}; do
             if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
-              echo "✓ PDP is ready"
+              echo "✓ PDP health endpoint is responding"
               break
             elif [ $i -eq 10 ]; then
               echo "✗ PDP failed to become ready"
@@ -183,6 +183,27 @@ jobs:
               exit 1
             else
               echo "Attempt $i/10: PDP not ready yet..."
+              sleep 3
+            fi
+          done
+          
+          # Verify PDP is fully synced with Permit.io cloud
+          echo "Verifying PDP sync with Permit.io cloud..."
+          for i in {1..20}; do
+            response=$(curl -s -X POST http://localhost:7766/allowed \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $PERMIT_API_KEY" \
+              -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}' 2>/dev/null || echo "{}")
+            
+            if echo "$response" | grep -q '"synced":true'; then
+              echo "✓ PDP is fully synced with Permit.io cloud"
+              echo "  User david-santander is synchronized"
+              break
+            elif [ $i -eq 20 ]; then
+              echo "⚠️ PDP sync verification timeout - proceeding anyway"
+              echo "  This may affect audit logging"
+            else
+              echo "  Waiting for PDP to sync with cloud... ($i/20)"
               sleep 3
             fi
           done
