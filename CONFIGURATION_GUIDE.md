@@ -640,6 +640,83 @@ When editor role is active:
    - Value: Your Snyk Organization ID
    - Click "Add secret"
 
+### Step 2.1: Configure GitHub Actions for Audit Logging
+
+**Critical**: For audit logs to appear in Permit.io when running GitHub Actions, the workflow must include specific configurations:
+
+1. **Environment Variable Setup in Workflow**
+   
+   The GitHub Actions workflow automatically configures the required environment variables:
+   
+   ```yaml
+   - name: Start Docker Compose services
+     env:
+       PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+       SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+       USER_KEY: david-santander
+       USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
+     run: |
+       # Create .env file for Docker Compose
+       cat > .env << EOF
+       PERMIT_API_KEY=$PERMIT_API_KEY
+       SNYK_TOKEN=$SNYK_TOKEN
+       SNYK_ORG_ID=$SNYK_ORG_ID
+       USER_KEY=${USER_KEY}
+       USER_ROLE=${USER_ROLE}
+       EOF
+   ```
+
+2. **PDP Synchronization Verification**
+   
+   The workflow includes a sync verification step:
+   
+   ```yaml
+   # Verify PDP is fully synced with Permit.io cloud
+   echo "Verifying PDP sync with Permit.io cloud..."
+   for i in {1..20}; do
+     response=$(curl -s -X POST http://localhost:7766/allowed \
+       -H "Content-Type: application/json" \
+       -H "Authorization: Bearer $PERMIT_API_KEY" \
+       -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}' || echo "{}")
+     
+     if echo "$response" | grep -q '"synced":true'; then
+       echo "✓ PDP is fully synced with Permit.io cloud"
+       break
+     elif [ $i -eq 20 ]; then
+       echo "⚠️ PDP sync verification timeout - proceeding anyway"
+     else
+       echo "  Waiting for PDP to sync with cloud... ($i/20)"
+       sleep 3
+     fi
+   done
+   ```
+
+3. **Network Connectivity Test**
+   
+   The workflow verifies connectivity to Permit.io:
+   
+   ```yaml
+   # Test network connectivity to Permit.io cloud
+   echo "Testing connectivity to Permit.io cloud..."
+   if curl -sf https://api.permit.io/v2/projects \
+      -H "Authorization: Bearer $PERMIT_API_KEY" | grep -q "200"; then
+     echo "✓ Successfully connected to Permit.io cloud API"
+   else
+     echo "⚠️ Could not verify connection to Permit.io cloud"
+   fi
+   ```
+
+4. **Audit Log Processing Delay**
+   
+   After gate evaluation, the workflow waits for audit logs to be sent:
+   
+   ```yaml
+   # Wait for audit logs to be sent to Permit.io cloud
+   echo "Waiting for audit logs to be sent to Permit.io..."
+   sleep 10
+   ```
+
 ### Step 3: Configure Policy Sync
 
 1. **Create Policy Repository (Optional)**
@@ -861,6 +938,185 @@ ls -la permit-gating/policies/
 find . -name "*.rego" -o -name "permit_config.json"
 ```
 
+### Audit Logging Issues
+
+**Issue: "Audit logs appear locally but not in GitHub Actions"**
+
+This is the most common issue and typically results from missing configuration in GitHub Actions.
+
+**Root Cause Analysis:**
+1. **Missing Environment Variables**: USER_KEY and USER_ROLE not passed to Docker containers
+2. **PDP Synchronization**: User data not synchronized with Permit.io cloud
+3. **Network Connectivity**: PDP cannot reach Permit.io cloud API
+4. **Missing Audit Configuration**: PDP not configured for audit logging
+5. **Timing Issues**: Audit logs not sent before container shutdown
+
+**Step-by-Step Troubleshooting:**
+
+**Step 1: Verify Environment Variables in GitHub Actions**
+```bash
+# Check GitHub Actions logs for .env file creation
+# Look for this section in the workflow logs:
+cat > .env << EOF
+PERMIT_API_KEY=permit_key_...
+SNYK_TOKEN=...
+SNYK_ORG_ID=...
+USER_KEY=david-santander
+USER_ROLE=editor
+EOF
+
+# If USER_KEY and USER_ROLE are missing, the workflow needs updating
+```
+
+**Step 2: Check PDP Synchronization**
+```bash
+# Look for this message in GitHub Actions logs:
+"✓ PDP is fully synced with Permit.io cloud"
+"  User david-santander is synchronized"
+
+# If not found, check for:
+"⚠️ PDP sync verification timeout - proceeding anyway"
+```
+
+**Step 3: Verify Network Connectivity**
+```bash
+# Look for this message in GitHub Actions logs:
+"✓ Successfully connected to Permit.io cloud API"
+
+# If not found, check for:
+"⚠️ Could not verify connection to Permit.io cloud"
+```
+
+**Step 4: Confirm Docker Compose Audit Configuration**
+```bash
+# Verify these environment variables in docker-compose.gating.yml:
+PDP_AUDIT_LOG_ENABLED=true
+PDP_AUDIT_LOG_LEVEL=info
+PDP_DECISION_LOG_ENABLED=true
+```
+
+**Step 5: Check Audit Log Processing**
+```bash
+# Look for this in GitHub Actions logs:
+"Waiting for audit logs to be sent to Permit.io..."
+"Checking PDP logs for audit activity..."
+```
+
+**Solutions by Root Cause:**
+
+**Solution 1: Fix Environment Variables**
+
+If USER_KEY and USER_ROLE are missing from GitHub Actions:
+
+1. Update the GitHub Actions workflow:
+```yaml
+- name: Start Docker Compose services
+  env:
+    PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+    SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+    USER_KEY: david-santander  # Add this line
+    USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Add this line
+```
+
+2. Ensure .env file creation includes USER variables:
+```yaml
+cat > .env << EOF
+PERMIT_API_KEY=$PERMIT_API_KEY
+SNYK_TOKEN=$SNYK_TOKEN
+SNYK_ORG_ID=$SNYK_ORG_ID
+USER_KEY=${USER_KEY}  # Add this line
+USER_ROLE=${USER_ROLE}  # Add this line
+EOF
+```
+
+**Solution 2: Add PDP Synchronization**
+
+If PDP sync verification is missing:
+
+```yaml
+# Add this step after PDP health check
+- name: Verify PDP Synchronization
+  run: |
+    echo "Verifying PDP sync with Permit.io cloud..."
+    for i in {1..20}; do
+      response=$(curl -s -X POST http://localhost:7766/allowed \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $PERMIT_API_KEY" \
+        -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}' || echo "{}")
+      
+      if echo "$response" | grep -q '"synced":true'; then
+        echo "✓ PDP is fully synced with Permit.io cloud"
+        break
+      elif [ $i -eq 20 ]; then
+        echo "⚠️ PDP sync verification timeout - proceeding anyway"
+      else
+        echo "  Waiting for PDP to sync with cloud... ($i/20)"
+        sleep 3
+      fi
+    done
+```
+
+**Solution 3: Add Network Connectivity Test**
+
+```yaml
+# Add this step to verify Permit.io connectivity
+- name: Test Permit.io Connectivity
+  run: |
+    echo "Testing connectivity to Permit.io cloud..."
+    if curl -sf https://api.permit.io/v2/projects \
+       -H "Authorization: Bearer $PERMIT_API_KEY" | grep -q "200"; then
+      echo "✓ Successfully connected to Permit.io cloud API"
+    else
+      echo "⚠️ Could not verify connection to Permit.io cloud"
+    fi
+```
+
+**Solution 4: Enable Audit Logging in Docker Compose**
+
+Update `permit-gating/docker/docker-compose.gating.yml`:
+
+```yaml
+services:
+  permit-pdp:
+    environment:
+      - PDP_API_KEY=${PERMIT_API_KEY}
+      - PDP_DEBUG=true
+      - PDP_LOG_LEVEL=DEBUG
+      - PDP_AUDIT_LOG_ENABLED=true      # Add this
+      - PDP_AUDIT_LOG_LEVEL=info        # Add this
+      - PDP_DECISION_LOG_ENABLED=true   # Add this
+```
+
+**Solution 5: Add Audit Log Processing Delay**
+
+```yaml
+# Add this after gate evaluation
+- name: Wait for Audit Logs
+  run: |
+    echo "Waiting for audit logs to be sent to Permit.io..."
+    sleep 10
+    
+    echo "Checking PDP logs for audit activity..."
+    docker compose logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found"
+```
+
+**Verification:**
+
+After implementing fixes:
+
+1. **Run GitHub Actions workflow**
+2. **Check workflow logs for all success messages**:
+   - "✓ PDP is fully synced with Permit.io cloud"
+   - "✓ Successfully connected to Permit.io cloud API"
+   - "Waiting for audit logs to be sent to Permit.io..."
+
+3. **Verify in Permit.io Dashboard**:
+   - Login to https://app.permit.io
+   - Navigate to Audit Logs
+   - Filter by User: `david-santander`, Action: `deploy`
+   - Should see audit entries from both local and GitHub Actions runs
+
 ### Common Editor Override Issues
 
 **Issue: "Editor override not working"**
@@ -1028,6 +1284,21 @@ USER_KEY=staging-editor
 # Development Environment
 USER_ROLE=editor       # Flexible for development
 USER_KEY=dev-editor
+```
+
+**Audit Logging Environment Variables:**
+
+For consistent audit trails across all environments, ensure these Docker Compose environment variables are set:
+
+```yaml
+# Required for audit logging to Permit.io cloud
+environment:
+  - PDP_API_KEY=${PERMIT_API_KEY}
+  - PDP_DEBUG=true
+  - PDP_LOG_LEVEL=DEBUG
+  - PDP_AUDIT_LOG_ENABLED=true    # Critical for audit logging
+  - PDP_AUDIT_LOG_LEVEL=info      # Controls audit detail level
+  - PDP_DECISION_LOG_ENABLED=true # Enables decision logging
 ```
 
 **Configuration Security:**

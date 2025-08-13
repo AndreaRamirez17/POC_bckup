@@ -318,6 +318,74 @@ USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
 - **PDP API Endpoint**: `http://localhost:7766` (for authorization calls)
 - **PDP Health Endpoint**: `http://localhost:7001/healthy` (for status checks)
 
+### Audit Logging Configuration
+
+For audit logs to appear correctly in Permit.io, several configuration requirements must be met:
+
+#### Environment Variables
+
+**Local Environment (.env file):**
+```bash
+USER_KEY=david-santander
+USER_ROLE=editor
+```
+
+**GitHub Actions (automatically configured in workflow):**
+```yaml
+USER_KEY: david-santander
+USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
+```
+
+#### Docker Compose Configuration
+
+The PDP container requires explicit audit logging environment variables:
+
+```yaml
+environment:
+  - PDP_API_KEY=${PERMIT_API_KEY}
+  - PDP_DEBUG=true
+  - PDP_LOG_LEVEL=DEBUG
+  - PDP_AUDIT_LOG_ENABLED=true
+  - PDP_AUDIT_LOG_LEVEL=info
+  - PDP_DECISION_LOG_ENABLED=true
+```
+
+#### GitHub Actions Requirements
+
+The GitHub Actions workflow includes several critical steps for audit logging:
+
+1. **PDP Synchronization Verification**: Ensures user data is synced before evaluation
+2. **Network Connectivity Test**: Verifies connection to Permit.io cloud
+3. **Audit Log Delay**: 10-second delay after evaluation to ensure logs are sent
+
+#### Troubleshooting Audit Logs
+
+**Issue: Audit logs appear locally but not in GitHub Actions**
+
+**Root Causes:**
+- Missing USER_KEY and USER_ROLE in GitHub Actions environment
+- PDP not synchronized with Permit.io cloud
+- Network connectivity issues
+- Missing audit logging environment variables
+
+**Solutions:**
+1. **Verify Environment Variables**: Ensure USER_KEY and USER_ROLE are included in GitHub Actions .env file creation
+2. **Check PDP Sync**: Look for "PDP is fully synced with Permit.io cloud" message in logs
+3. **Test Connectivity**: Verify "Successfully connected to Permit.io cloud API" message
+4. **Enable Audit Logging**: Ensure PDP_AUDIT_LOG_ENABLED=true in Docker Compose
+5. **Allow Processing Time**: 10-second delay after evaluation ensures logs are transmitted
+
+**Verification Steps:**
+```bash
+# Check local audit logs
+./permit-gating/scripts/test-gates-local.sh
+
+# Verify in Permit.io dashboard:
+# 1. Login to https://app.permit.io
+# 2. Navigate to Audit Logs
+# 3. Filter by User: david-santander, Action: deploy
+```
+
 ## Troubleshooting
 
 ### Services Not Starting
@@ -334,8 +402,49 @@ docker-compose logs opal-fetcher
 curl http://localhost:7001/healthy
 
 # Test with debug mode
-DEBUG=true ./scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
+DEBUG=true ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
+
+### Audit Logs Not Appearing
+
+**Issue**: Audit logs work locally but don't appear in GitHub Actions
+
+**Diagnosis Steps:**
+```bash
+# 1. Check PDP container logs
+docker compose logs permit-pdp --tail=20
+
+# 2. Verify user synchronization
+curl -X POST http://localhost:7766/allowed \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $PERMIT_API_KEY" \
+  -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}'
+
+# 3. Test connectivity to Permit.io
+curl -sf https://api.permit.io/v2/projects -H "Authorization: Bearer $PERMIT_API_KEY"
+```
+
+**Common Solutions:**
+
+1. **Missing Environment Variables in GitHub Actions:**
+   - Ensure USER_KEY and USER_ROLE are added to .env file creation in workflow
+   - Check that Docker Compose receives these variables
+
+2. **PDP Synchronization Issues:**
+   - Add sync verification loop in GitHub Actions
+   - Wait for user data to be synchronized with Permit.io cloud
+
+3. **Audit Logging Not Enabled:**
+   - Add explicit audit logging environment variables to Docker Compose
+   - Verify PDP_AUDIT_LOG_ENABLED=true
+
+4. **Network Connectivity:**
+   - Add connectivity test to Permit.io cloud in workflow
+   - Ensure container can reach https://api.permit.io
+
+5. **Insufficient Processing Time:**
+   - Add 10-second delay after gate evaluation
+   - Allow time for audit logs to be transmitted before container shutdown
 
 ### Snyk Not Working
 
