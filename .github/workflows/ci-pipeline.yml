@@ -31,11 +31,19 @@ jobs:
             java-version: ${{ env.JAVA_VERSION }}
             
       
-      - name: Cache Maven Dependencies
-        uses: actions/cache@4
+      #- name: Cache Maven Dependencies
+      #  uses: actions/cache@4
+      #  with:
+      #    path: ~/.m2/repository
+      #    key: build-maven-cache
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
         with:
           path: ~/.m2/repository
-          key: build-maven-cache
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
       
       
       - name: Get Maven Project Version
