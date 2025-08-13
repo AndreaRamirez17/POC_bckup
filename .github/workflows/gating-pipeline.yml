@@ -30,7 +30,7 @@ env:
   JAVA_VERSION: '11'
   MAVEN_VERSION: '3.8.6'
   DOCKER_BUILDKIT: 1
-  PDP_URL: http://localhost:7766
+  PDP_URL: http://localhost:7001
 
 jobs:
   build-and-scan:
@@ -170,7 +170,7 @@ jobs:
           
           # Check PDP health on correct port
           for i in {1..10}; do
-            if curl -sf http://localhost:7766/healthy > /dev/null 2>&1; then
+            if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
               echo "✓ PDP is ready"
               break
             elif [ $i -eq 10 ]; then
