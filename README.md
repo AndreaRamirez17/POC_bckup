@@ -238,6 +238,47 @@ hard_gate_fail if {
 ### Adding Data Sources
 Extend the OPAL fetcher in `/opal-fetcher/main.py` to integrate additional security tools.
 
+## Audit Logging
+
+All security gate evaluations are automatically logged to the Permit.io audit system for compliance and monitoring purposes.
+
+### Viewing Audit Logs
+1. Log in to your [Permit.io Dashboard](https://app.permit.io)
+2. Navigate to **Audit Logs** section
+3. Filter by:
+   - **User**: `david-santander` (or your configured USER_KEY)
+   - **Action**: `deploy`
+   - **Resource**: `deployment`
+
+### Audit Log Details
+Each gate evaluation creates an audit entry containing:
+- **User Identity**: From `USER_KEY` environment variable
+- **User Role**: From `USER_ROLE` environment variable (e.g., `editor`, `ci-pipeline`)
+- **Action**: Always `deploy` for gate evaluations
+- **Resource Type**: `deployment`
+- **Decision**: `allow` or `deny` based on policy evaluation
+- **Context**: Environment, repository, commit SHA, workflow details
+- **Vulnerability Data**: Critical, high, medium, low counts and details
+
+### Environment Configuration
+For consistent audit trails, configure these environment variables:
+
+**Local Environment (.env file):**
+```bash
+USER_KEY=david-santander
+USER_ROLE=editor
+```
+
+**GitHub Actions (workflow secrets):**
+```yaml
+USER_KEY: david-santander
+USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
+```
+
+### Port Configuration
+- **PDP API Endpoint**: `http://localhost:7766` (for authorization calls)
+- **PDP Health Endpoint**: `http://localhost:7001/healthy` (for status checks)
+
 ## Troubleshooting
 
 ### Services Not Starting
@@ -249,7 +290,7 @@ docker-compose logs opal-fetcher
 ### Gate Evaluation Failing
 ```bash
 # Check PDP health
-curl http://localhost:7766/ready
+curl http://localhost:7001/healthy
 
 # Test with debug mode
 DEBUG=true ./scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json

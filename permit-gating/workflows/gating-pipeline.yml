@@ -128,7 +128,7 @@ jobs:
           sleep 10
           
           # Check PDP health
-          curl -f http://localhost:7766/ready || exit 1
+          curl -f http://localhost:7001/healthy || exit 1
           
       - name: Evaluate Security Gates
         id: gate_evaluation

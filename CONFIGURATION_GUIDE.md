@@ -505,8 +505,8 @@ When editor role is active:
 
 3. **Verify PDP is Running**
    ```bash
-   curl http://localhost:7766/ready
-   # Should return: {"status":"ready"}
+   curl http://localhost:7001/healthy
+   # Should return: {"status":"healthy"}
    ```
    
    **If you get "Connection reset by peer" error:**
@@ -565,7 +565,7 @@ When editor role is active:
    ```bash
    # PDP might take time to initialize
    sleep 30
-   curl http://localhost:7766/ready
+   curl http://localhost:7001/healthy
    ```
    
    **Fix 4: Check Docker Network**
@@ -575,7 +575,7 @@ When editor role is active:
    
    # Wait and try again
    sleep 10
-   curl http://localhost:7766/ready
+   curl http://localhost:7001/healthy
    ```
 
 ---
@@ -701,7 +701,7 @@ When editor role is active:
 2. **Manual PDP Test (Optional)**
    ```bash
    # Check PDP health
-   curl http://localhost:7766/ready
+   curl http://localhost:7001/healthy
 
    # Test authorization check
    curl -X POST http://localhost:7766/allowed \

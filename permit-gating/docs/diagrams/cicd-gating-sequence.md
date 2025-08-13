@@ -50,7 +50,7 @@ sequenceDiagram
     PDP->>PDP: Sync policies from Permit.io cloud
     OPAL->>OPAL: Initialize Snyk data fetcher
     
-    GA->>PDP: curl http://localhost:7766/ready (health check)
+    GA->>PDP: curl http://localhost:7001/healthy (health check)
     PDP-->>GA: 200 OK (ready)
     
     GA->>GA: chmod +x evaluate-gates.sh

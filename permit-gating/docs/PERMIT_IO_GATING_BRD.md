@@ -120,11 +120,12 @@ The PoC infrastructure will consist of the following containerized services:
 
 * **Permit.io PDP (Policy Decision Point):**
   * Container image: `permitio/pdp-v2:latest`
-  * Exposed on port 7766 for policy decision requests
+  * API endpoint on port 7766 for policy decision requests
+  * Health endpoint on port 7001 for status checks
   * Environment variables:
     * `PDP_API_KEY`: API key for connecting to Permit.io cloud
     * `PDP_DEBUG`: Set to `true` for verbose logging during development
-  * Health check endpoint: `/ready` on port 7766
+  * Health check endpoint: `/healthy` on port 7001
 
 * **Spring Boot Mock Application:**
   * Custom Docker image built from the PoC application
@@ -154,7 +155,7 @@ services:
       - PDP_API_KEY=${PERMIT_API_KEY}
       - PDP_DEBUG=true
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7766/ready"]
+      test: ["CMD", "curl", "-f", "http://localhost:7001/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -198,7 +199,7 @@ networks:
 3. **Verifying Services:**
    ```bash
    # Check PDP health
-   curl http://localhost:7766/ready
+   curl http://localhost:7001/healthy
    
    # Check Spring Boot app
    curl http://localhost:8080/actuator/health
@@ -218,7 +219,7 @@ The GitHub Actions workflow will utilize Docker Compose for consistent gate eval
   
 - name: Wait for Services
   run: |
-    until curl -f http://localhost:7766/ready; do
+    until curl -f http://localhost:7001/healthy; do
       sleep 2
     done
     
