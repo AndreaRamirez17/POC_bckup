@@ -10,7 +10,7 @@ env:
   JAVA_VERSION: 11
   PROJECT_NAME: 'gating-poc-app'
   PROJECT_PATH: 'microservice-moc-app'
-  DOCKERFILE_PATH: microservice-moc-app/Dockerfile'
+  DOCKERFILE_PATH: 'microservice-moc-app/Dockerfile'
 
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
