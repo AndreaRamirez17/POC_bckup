@@ -137,7 +137,7 @@ jobs:
       - name: Load Current Docker Image
         run: |
           ls -la
-          dockr load -i ./download-artifacts/docker-image/${{ env.PROJECT_NAME}}.tar
+          docker load -i ./download-artifacts/docker-image/${{ env.PROJECT_NAME}}.tar
           docker images
 
       - name: Tag Docker Image
