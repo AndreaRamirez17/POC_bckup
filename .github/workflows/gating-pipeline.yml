@@ -150,7 +150,7 @@ jobs:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
-          USER_KEY: david-santander
+          USER_KEY: ${{ github.actor }}
           USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
         run: |
           # Create .env file only for Docker Compose (required by docker-compose.yml)
@@ -236,7 +236,7 @@ jobs:
         env:
           PDP_URL: ${{ env.PDP_URL }}
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
-          USER_KEY: david-santander  # Force consistent user identity for Permit.io audit logs
+          USER_KEY: ${{ github.actor }}  # Use GitHub username for Permit.io audit logs
           USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Use input role or default to editor for testing
         run: |
           echo "🔐 Evaluating security gates:"
