@@ -18,7 +18,7 @@ jobs:
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
-      #docker_image_tag: ${{ steps.get-tag-name.outputs.docker_tag }}
+      #docker_image_tag: $ { { steps.get-tag-name.outputs.docker_tag }}
 
     steps:
       - name: Checkout Code
@@ -38,7 +38,7 @@ jobs:
       #    key: build-maven-cache
 
       - name: Cache Maven dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v4.2.4
         with:
           path: ~/.m2/repository
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
