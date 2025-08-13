@@ -40,7 +40,8 @@
       "Bash(./evaluate-gates.sh:*)",
       "Bash(find:*)",
       "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/permit-gating/scripts/test-gates-local.sh)",
-      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/permit-gating/scripts/test-gates-local.sh:*)"
+      "Bash(/mnt/c/Users/david/OneDrive/Documentos/Projects/cicd-pipeline-poc/permit-gating/scripts/test-gates-local.sh:*)",
+      "Bash(sed:*)"
     ],
     "deny": []
   }
