@@ -150,12 +150,16 @@ jobs:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+          USER_KEY: david-santander
+          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
         run: |
           # Create .env file only for Docker Compose (required by docker-compose.yml)
           cat > .env << EOF
           PERMIT_API_KEY=$PERMIT_API_KEY
           SNYK_TOKEN=$SNYK_TOKEN
           SNYK_ORG_ID=$SNYK_ORG_ID
+          USER_KEY=${USER_KEY}
+          USER_ROLE=${USER_ROLE}
           EOF
           
           # Start Docker Compose services
