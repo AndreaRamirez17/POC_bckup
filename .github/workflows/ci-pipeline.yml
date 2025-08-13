@@ -9,6 +9,7 @@ env:
   # Define common environment variables
   JAVA_VERSION: 11
   PROJECT_NAME: 'gating-poc-app'
+  PROJECT_PATH: 'microservice-moc-app'
   DOCKERFILE_PATH: 'microservice-moc-app/Dockerfile'
 
 jobs:
@@ -101,4 +102,13 @@ jobs:
       - name: List Docker Images
         run: docker images
           
-        
+      - name: Export Docker Image to Tar (for subsequent jobs)
+        run: docker save ${{ env.PROJECT_NAME }}:${{ github.sha}} -o ${{ env.PROJECT_NAME}}.tar
+
+      - name: Upload Docker Image Tarball Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ success() }}
+        with:
+          name: ${{ env.PROJECT_NAME}}-docker-image
+          path: ${{ env.PROJECT_NAME}}.tar
+          retention-days: 7
