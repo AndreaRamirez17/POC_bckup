@@ -24,6 +24,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Maven Cache
+        uses: actions/cache@4.2.2
+        with:
+          path: ~/.m2/repository
+          key: buildCache
+
+
       - name: Set up Java ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -52,3 +59,16 @@ jobs:
           JAR_NAME=$(ls target/*.jar | head -n 1 | xargs -n 1 basename )
           echo "jar_name=$JAR_NAME >> $GITHUB_OUTPUT"
           echo "Discoverd JAR name: $JAR_NAME"
+
+      - name: Execute Unit Tests
+        env:
+          MAVEN_OPTS: -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandlre.count=3
+        run: mvn test
+
+      - name: Upload JAR Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ success() }}
+        with:
+          name: ${{env.PROJECT+NAME}}-jar
+          path: target/${{ steps.get-jar-name.outputs.jar_name}}
+          retention-days: 7
