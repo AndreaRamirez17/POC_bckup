@@ -35,7 +35,7 @@ jobs:
             cache: 'maven'
       
       - name: Maven Cache
-        uses: actions/cache@4.2.4
+        uses: actions/cache@4
         with:
           path: ~/.m2/repository
           key: buildCache
