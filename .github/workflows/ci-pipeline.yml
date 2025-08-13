@@ -1,0 +1,48 @@
+name: CI Pipe Line Demo
+
+on:
+  # To execute this pipeline needs to be clicked  
+  workflow_dispatch:
+
+
+env:
+  # Define common environment variables
+  JAVA_VERSION: 11
+  PROJECT_NAME: 'gating-poc-app'
+  DOCKERFILE_PATH: 'microservice-moc-app'
+
+jobs:
+  # Job 1: Build jar, Docker Image an execute Unit Tests
+  test_and_build:
+    runs-on: ubuntu-latest
+    outputs:      
+      project_version: ${{ steps.get-version.outputs.project_version }}
+      jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
+      #docker_image_tag: ${{ steps.get-tag-name.outputs.docker_tag }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+            distribution: 'temurin'
+            java-version: ${{ env.JAVA_VERSION }}
+            cache: 'maven'
+
+      - name: Get Maven Project Version
+        id: get-version
+        run: |
+          PROJECT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "project_version=$PROJECT_VERSION" >> $GITHUB_OUTPUT
+          echo "Discovered Project version: $PROJECT_VERSION"
+
+      - name: Build Maven Project and Get Jar Name
+        id: get-jar-name
+        run: |
+          # Build without run the tests. The test will be executed in the next step
+          mvn clean package -DskipTests
+          JAR_NAME=$(ls target/*.jar | head -n 1 | xargs -n 1 basename )
+          echo "jar_name=$JAR_NAME >> $GITHUB_OUTPUT"
+          echo "Discoverd JAR name: $JAR_NAME"
