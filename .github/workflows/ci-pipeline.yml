@@ -78,7 +78,7 @@ jobs:
           retention-days: 7
 
       - name: Setup Docker Buildx
-        uses: docker/setup-build-action@v3
+        uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
         id: build-image
