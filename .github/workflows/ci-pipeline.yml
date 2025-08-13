@@ -24,11 +24,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Maven Cache
-        uses: actions/cache@4.2.4
-        with:
-          path: ~/.m2/repository
-          key: buildCache
+      
 
 
       - name: Set up Java ${{ env.JAVA_VERSION }}
@@ -37,7 +33,14 @@ jobs:
             distribution: 'temurin'
             java-version: ${{ env.JAVA_VERSION }}
             cache: 'maven'
-
+      
+      - name: Maven Cache
+        uses: actions/cache@4.2.4
+        with:
+          path: ~/.m2/repository
+          key: buildCache
+      
+      
       - name: Get Maven Project Version
         id: get-version
         run: |
