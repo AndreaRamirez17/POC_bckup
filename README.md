@@ -5,6 +5,7 @@ A proof of concept implementation for a modern CI/CD security gating platform th
 ## Overview
 
 This PoC demonstrates an end-to-end security gating solution that:
+
 - **Scans** code for vulnerabilities using Snyk
 - **Evaluates** security policies using Permit.io Policy Decision Point (PDP)
 - **Enforces** gates in CI/CD pipelines via GitHub Actions
@@ -36,6 +37,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 ## Components
 
 ### 1. Mock Spring Boot Application
+
 - **Location**: `/microservice-moc-app`
 - **Purpose**: Simulates a real application with intentionally vulnerable dependencies
 - **Vulnerabilities**:
@@ -44,6 +46,7 @@ This PoC demonstrates an end-to-end security gating solution that:
   - **Medium**: Jackson Databind 2.9.10.1
 
 ### 2. Docker Compose Infrastructure
+
 - **Permit.io PDP**: Policy Decision Point for gate evaluation
 - **OPAL Server**: Manages policy updates and data synchronization
 - **OPAL Fetcher**: Custom service to fetch Snyk vulnerability data
@@ -51,6 +54,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 - **Spring App**: The mock application being tested
 
 ### 3. Security Policies & Role-Based Access
+
 - **Hard Gate**: Fails pipeline on critical vulnerabilities
 - **Soft Gate**: Warns on high severity vulnerabilities
 - **Info Gate**: Provides information on medium severity issues
@@ -58,12 +62,14 @@ This PoC demonstrates an end-to-end security gating solution that:
 - **Role-Based Permissions**: Different access levels (ci-pipeline, editor) with appropriate permissions
 
 ### 4. Gate Evaluation Scripts (`permit-gating/scripts/`)
+
 - **evaluate-gates.sh**: Main security gate evaluation script with role-based override support
 - **test-gates-local.sh**: Local testing utility for full pipeline simulation
 - **validate-permit.sh**: Permit.io configuration validation script
 - **Enhanced .env Configuration**: Flexible user role and key management
 
 ### 5. GitHub Actions Workflow
+
 - Builds and scans the application
 - Evaluates security gates with role-based access
 - Makes deployment decisions based on gate results and user permissions
@@ -81,17 +87,20 @@ This PoC demonstrates an end-to-end security gating solution that:
 ## Quick Start
 
 ### 1. Clone the Repository
+
 ```bash
 git clone <repository-url>
 cd cicd-pipeline-poc
 ```
 
 ### 2. Configure Services
+
 **IMPORTANT**: Before running the PoC, you need to configure Snyk and Permit.io accounts.
 
 📖 **Follow the detailed [Configuration Guide](CONFIGURATION_GUIDE.md)** for step-by-step instructions.
 
 **Quick setup summary:**
+
 ```bash
 # Copy environment template (if it exists)
 cp .env.example .env || echo "Using existing .env file"
@@ -118,6 +127,7 @@ chmod +x permit-gating/scripts/validate-permit.sh
 ```
 
 ### 3. Run Local Test
+
 ```bash
 chmod +x permit-gating/scripts/test-gates-local.sh
 ./permit-gating/scripts/test-gates-local.sh
@@ -128,11 +138,13 @@ Select option 1 for a full test run.
 ## Manual Testing
 
 ### Start Services
+
 ```bash
 docker-compose up -d
 ```
 
 ### Run Snyk Scan
+
 ```bash
 cd microservice-moc-app
 mvn clean compile
@@ -141,6 +153,7 @@ cd ..
 ```
 
 ### Evaluate Gates
+
 ```bash
 ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
@@ -148,6 +161,7 @@ cd ..
 ### Expected Results
 
 With the included vulnerable dependencies, you should see:
+
 - **Hard Gate**: FAIL (due to critical Log4j vulnerability)
 - **Soft Gate**: WARN (due to high severity Commons Collections vulnerability)
 - **Info**: Medium severity Jackson Databind vulnerability
@@ -155,6 +169,7 @@ With the included vulnerable dependencies, you should see:
 ### Editor Override Testing
 
 To test the editor override functionality:
+
 ```bash
 # Enable editor override in .env file
 # Uncomment these lines:
@@ -166,6 +181,7 @@ To test the editor override functionality:
 ```
 
 **Expected Editor Override Results:**
+
 - **Decision**: EDITOR_OVERRIDE - Deployment allowed despite critical vulnerabilities
 - **Output**: Clear warning showing editor privileges are active
 - **Audit Trail**: Shows user, role, and specific vulnerabilities being overridden
@@ -174,19 +190,25 @@ To test the editor override functionality:
 ## GitHub Actions Setup
 
 ### 1. Add Repository Secrets
+
 Go to Settings → Secrets and add:
+
 - `PERMIT_API_KEY`: Your Permit.io API key
 - `SNYK_TOKEN`: Your Snyk authentication token
 - `SNYK_ORG_ID`: Your Snyk organization ID
 
 ### 2. Push Code
+
 The pipeline will automatically trigger on:
+
 - Push to `main` or `develop` branches
 - Pull requests to `main` branch
 - Manual workflow dispatch
 
 ### 3. Monitor Pipeline
+
 Check the Actions tab to see:
+
 - Build and scan results
 - Gate evaluation outcomes
 - Deployment status
@@ -194,25 +216,30 @@ Check the Actions tab to see:
 ## Gate Scenarios
 
 ### Scenario 1: Critical Vulnerability (Hard Gate)
+
 **Setup**: Application includes Log4j 2.14.1
 **Result**: Pipeline FAILS and deployment is blocked
 **Message**: "Critical vulnerabilities must be resolved before deployment"
 
 ### Scenario 2: High Severity (Soft Gate)
+
 **Setup**: Remove critical vulnerabilities, keep high severity ones
 **Result**: Pipeline PASSES with warnings
 **Message**: "High severity vulnerabilities detected. Review recommended"
 
 ### Scenario 3: Clean Build
+
 **Setup**: Update all dependencies to secure versions
 **Result**: Pipeline PASSES
 **Message**: "All security gates passed"
 
 ### Scenario 4: Editor Override (Security Gate Bypass)
+
 **Setup**: Configure editor role in .env and run with critical vulnerabilities
 **Result**: Pipeline PASSES with override warning
 **Message**: "EDITOR OVERRIDE - Deployment allowed with editor privileges"
-**Details**: 
+**Details**:
+
 - Shows clear audit trail of who overrode the gates
 - Lists all critical vulnerabilities being overridden
 - Provides recommendations for post-deployment remediation
@@ -220,7 +247,9 @@ Check the Actions tab to see:
 ## Customization
 
 ### Adding New Gates
+
 Edit `permit-gating/policies/gating_policy.rego` to add custom rules:
+
 ```rego
 custom_gate_fail if {
     input.resource.attributes.customMetric > threshold
@@ -228,7 +257,9 @@ custom_gate_fail if {
 ```
 
 ### Modifying Thresholds
+
 Update the policy rules in `gating_policy.rego`:
+
 ```rego
 hard_gate_fail if {
     input.resource.attributes.criticalCount > 0  # Change threshold here
@@ -236,6 +267,7 @@ hard_gate_fail if {
 ```
 
 ### Adding Data Sources
+
 Extend the OPAL fetcher in `/opal-fetcher/main.py` to integrate additional security tools.
 
 ## Audit Logging
@@ -243,6 +275,7 @@ Extend the OPAL fetcher in `/opal-fetcher/main.py` to integrate additional secur
 All security gate evaluations are automatically logged to the Permit.io audit system for compliance and monitoring purposes.
 
 ### Viewing Audit Logs
+
 1. Log in to your [Permit.io Dashboard](https://app.permit.io)
 2. Navigate to **Audit Logs** section
 3. Filter by:
@@ -251,7 +284,9 @@ All security gate evaluations are automatically logged to the Permit.io audit sy
    - **Resource**: `deployment`
 
 ### Audit Log Details
+
 Each gate evaluation creates an audit entry containing:
+
 - **User Identity**: From `USER_KEY` environment variable
 - **User Role**: From `USER_ROLE` environment variable (e.g., `editor`, `ci-pipeline`)
 - **Action**: Always `deploy` for gate evaluations
@@ -261,33 +296,39 @@ Each gate evaluation creates an audit entry containing:
 - **Vulnerability Data**: Critical, high, medium, low counts and details
 
 ### Environment Configuration
+
 For consistent audit trails, configure these environment variables:
 
 **Local Environment (.env file):**
+
 ```bash
 USER_KEY=david-santander
 USER_ROLE=editor
 ```
 
 **GitHub Actions (workflow secrets):**
+
 ```yaml
 USER_KEY: david-santander
 USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
 ```
 
 ### Port Configuration
+
 - **PDP API Endpoint**: `http://localhost:7766` (for authorization calls)
 - **PDP Health Endpoint**: `http://localhost:7001/healthy` (for status checks)
 
 ## Troubleshooting
 
 ### Services Not Starting
+
 ```bash
 docker-compose logs permit-pdp
 docker-compose logs opal-fetcher
 ```
 
 ### Gate Evaluation Failing
+
 ```bash
 # Check PDP health
 curl http://localhost:7001/healthy
@@ -297,11 +338,13 @@ DEBUG=true ./scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
 ### Snyk Not Working
+
 - Verify API token is correct
 - Check organization ID matches your Snyk account
 - Use mock data mode if Snyk is not configured
 
 ## Project Structure
+
 ```
 cicd-pipeline-poc/
 ├── .github/
@@ -340,6 +383,7 @@ cicd-pipeline-poc/
 ## Next Steps
 
 After validating this PoC:
+
 1. **Production Deployment**: Deploy PDP to Kubernetes for high availability
 2. **GitOps Integration**: Implement policy-as-code workflow
 3. **Additional Gates**: Add SonarQube, BlackDuck, and other scanners
@@ -350,6 +394,7 @@ After validating this PoC:
 ## Support
 
 For issues or questions:
+
 - **Start here**: [Configuration Guide](CONFIGURATION_GUIDE.md) for setup help
 - **Security Gating**: [Gating Documentation](permit-gating/docs/README.md) for gating-specific setup
 - Review the [Business Requirements Document](permit-gating/docs/PERMIT_IO_GATING_BRD.md)  
