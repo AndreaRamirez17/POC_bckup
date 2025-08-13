@@ -71,7 +71,9 @@ jobs:
       - name: Execute Unit Tests
         env:
           MAVEN_OPTS: -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandlre.count=3
-        run: mvn test
+        run: |
+          cd microservice-moc-app
+          mvn test
 
       - name: Upload JAR Artifact
         uses: actions/upload-artifact@v4
