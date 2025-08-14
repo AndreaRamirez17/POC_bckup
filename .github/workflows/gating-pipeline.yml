@@ -166,7 +166,7 @@ jobs:
           
           # Send results to Snyk dashboard with project name
           echo "📤 Sending scan results to Snyk dashboard..."
-          snyk monitor --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
+          snyk monitor --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
           
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📊 Snyk Dashboard Integration" >> $GITHUB_STEP_SUMMARY
@@ -233,7 +233,7 @@ jobs:
           snyk container test cicd-poc-app:scan --json > ../snyk-scanning/results/snyk-container-results.json || true
           
           # Send container results to Snyk UI
-          snyk container monitor cicd-poc-app:scan --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
+          snyk container monitor cicd-poc-app:scan --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
           
           # Parse container scan results for summary
           if [ -f "../snyk-scanning/results/snyk-container-results.json" ]; then
