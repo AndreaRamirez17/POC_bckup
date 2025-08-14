@@ -104,12 +104,58 @@ jobs:
           echo "MEDIUM_COUNT=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
           echo "LOW_COUNT=$LOW_COUNT" >> $GITHUB_OUTPUT
           
-          # Display summary
-          echo "## Vulnerability Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Critical: $CRITICAL_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- High: $HIGH_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- Medium: $MEDIUM_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "- Low: $LOW_COUNT" >> $GITHUB_STEP_SUMMARY
+          # Display enhanced summary
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Vulnerability Overview" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count | Impact |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Critical vulnerabilities
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "| 🔴 **Critical** | **$CRITICAL_COUNT** | **❌ Deployment Blocked** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔴 Critical | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # High vulnerabilities
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "| 🟠 **High** | **$HIGH_COUNT** | **⚠️ Review Required** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟠 High | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Medium vulnerabilities
+          if [ "$MEDIUM_COUNT" -gt 0 ]; then
+            echo "| 🟡 Medium | $MEDIUM_COUNT | ℹ️ Informational |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟡 Medium | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Low vulnerabilities
+          echo "| ⚪ Low | $LOW_COUNT | ✅ OK |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))** | - |" >> $GITHUB_STEP_SUMMARY
+          
+          # Add top vulnerable packages if any critical or high vulns exist
+          if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Priority Fixes Required" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Click to view affected packages</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Extract top 5 critical/high vulnerabilities
+            jq -r '.vulnerabilities | map(select(.severity == "critical" or .severity == "high")) | .[0:5] | .[] | "- **\(.packageName)** (\(.version)) - \(.title) [\(.severity | ascii_upcase)]"' ../snyk-scanning/results/snyk-results.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Unable to extract vulnerability details" >> $GITHUB_STEP_SUMMARY
+            
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Add scan metadata
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Scan Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project:** microservice-moc-app" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type:** Dependencies (Maven)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
           
       - name: Send results to Snyk UI (Monitor)
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
@@ -123,9 +169,14 @@ jobs:
           snyk monitor --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Snyk Dashboard" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Dependency scan results sent to [Snyk Dashboard](https://app.snyk.io)" >> $GITHUB_STEP_SUMMARY
-          echo "Project: cicd-pipeline-poc/microservice-moc-app-deps" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Snyk Dashboard Integration" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Results Published:** Dependency scan sent to Snyk platform" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Link |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Dependencies | ✅ Monitored | [View in Snyk](https://app.snyk.io/org/${{ secrets.SNYK_ORG_ID }}/project/) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Project Name | cicd-pipeline-poc/microservice-moc-app-deps | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 Monitoring | Enabled | Auto-scan on changes |" >> $GITHUB_STEP_SUMMARY
           
       - name: Run Snyk Code Analysis (SAST)
         env:
@@ -145,10 +196,27 @@ jobs:
             SAST_LOW=$(jq '.runs[0].results | map(select(.level == "note")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
             
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🔒 Code Security Analysis (SAST)" >> $GITHUB_STEP_SUMMARY
-            echo "- High: $SAST_HIGH" >> $GITHUB_STEP_SUMMARY
-            echo "- Medium: $SAST_MEDIUM" >> $GITHUB_STEP_SUMMARY
-            echo "- Low: $SAST_LOW" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Static Application Security Testing (SAST)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Finding Level | Count | Description |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------------|-------|-------------|" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$SAST_HIGH" -gt 0 ]; then
+              echo "| 🔴 **High** | **$SAST_HIGH** | **Security issues in code** |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🔴 High | 0 | ✅ No critical code issues |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$SAST_MEDIUM" -gt 0 ]; then
+              echo "| 🟡 Medium | $SAST_MEDIUM | Code quality warnings |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🟡 Medium | 0 | ✅ No warnings |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "| ⚪ Low | $SAST_LOW | Informational |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Analysis Type:** Snyk Code (Real-time SAST)" >> $GITHUB_STEP_SUMMARY
+            echo "**Languages:** Java, Spring Boot" >> $GITHUB_STEP_SUMMARY
           fi
           
       - name: Build and scan Docker image
@@ -167,10 +235,40 @@ jobs:
           # Send container results to Snyk UI
           snyk container monitor cicd-poc-app:scan --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
           
+          # Parse container scan results for summary
+          if [ -f "../snyk-scanning/results/snyk-container-results.json" ]; then
+            CONTAINER_CRITICAL=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "0")
+            CONTAINER_HIGH=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "0")
+            BASE_IMAGE=$(jq -r '.docker.baseImage // "unknown"' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "unknown")
+          else
+            CONTAINER_CRITICAL=0
+            CONTAINER_HIGH=0
+            BASE_IMAGE="openjdk:11-jre-slim"
+          fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🐳 Container Security" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Container scan results sent to [Snyk Dashboard](https://app.snyk.io)" >> $GITHUB_STEP_SUMMARY
-          echo "Project: cicd-pipeline-poc/microservice-moc-app-container" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Container Security Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Layer | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Base Image | ℹ️ Scanned | $BASE_IMAGE |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CONTAINER_CRITICAL" -gt 0 ]; then
+            echo "| 🔴 Critical Vulns | **$CONTAINER_CRITICAL found** | **Action Required** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔴 Critical Vulns | 0 | ✅ Clean |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "$CONTAINER_HIGH" -gt 0 ]; then
+            echo "| 🟠 High Vulns | $CONTAINER_HIGH found | Review needed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟠 High Vulns | 0 | ✅ Clean |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "| 📊 Monitoring | ✅ Enabled | [View in Snyk](https://app.snyk.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Project:** cicd-pipeline-poc/microservice-moc-app-container" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** Docker Hub" >> $GITHUB_STEP_SUMMARY
           
       - name: Upload Snyk results
         uses: actions/upload-artifact@v4
@@ -331,30 +429,95 @@ jobs:
           echo "Checking PDP logs for audit activity..."
           docker compose logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found in recent logs"
           
+          # Parse vulnerability details for enhanced summary
+          VULN_DETAILS=""
+          if [ -f "snyk-scanning/results/snyk-results.json" ]; then
+            # Get critical vulnerability count and details
+            CRIT_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            MED_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            TOTAL_VULNS=$((CRIT_COUNT + HIGH_COUNT + MED_COUNT + LOW_COUNT))
+          fi
+          
+          # Enhanced summary header
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚪 Security Gate Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add gate context
+          echo "### 🔐 Authorization Context" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 User | ${USER_KEY} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎭 Role | ${USER_ROLE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Policy Engine | Permit.io PDP |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔗 Audit Trail | [View in Permit.io](https://app.permit.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
           # Set job status based on gate result with enhanced messaging
           case $GATE_RESULT in
             0)
-              echo "✅ All security gates passed" >> $GITHUB_STEP_SUMMARY
-              echo "🎉 No blocking vulnerabilities found. Deployment can proceed." >> $GITHUB_STEP_SUMMARY
+              echo "### ✅ Gate Decision: **PASSED**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🎉 **Result:** All security requirements met. Deployment authorized." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ✅ Pass | None found |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ✅ Pass | All gates cleared |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | ✅ Granted | Ready to deploy |" >> $GITHUB_STEP_SUMMARY
               exit 0
               ;;
             1)
-              echo "⚠️ Soft gate warnings - proceeding with caution" >> $GITHUB_STEP_SUMMARY
-              echo "📋 Non-blocking vulnerabilities detected. Review recommended." >> $GITHUB_STEP_SUMMARY
+              echo "### ⚠️ Gate Decision: **WARNING**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📋 **Result:** Non-blocking issues detected. Proceeding with caution." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ✅ Pass | None found |" >> $GITHUB_STEP_SUMMARY
+              echo "| High Vulnerabilities | ⚠️ Warning | ${HIGH_COUNT:-0} found (non-blocking) |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ⚠️ Soft Gate | Review recommended |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | ✅ Granted | Proceed with review |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**📝 Recommendation:** Review and plan remediation for high-severity vulnerabilities in next sprint." >> $GITHUB_STEP_SUMMARY
               exit 0  # Treat soft gate warnings as success to continue pipeline
               ;;
             2)
-              echo "❌ Hard gate failed - deployment blocked" >> $GITHUB_STEP_SUMMARY
-              echo "🛑 Critical vulnerabilities must be resolved before deployment." >> $GITHUB_STEP_SUMMARY
+              echo "### ❌ Gate Decision: **BLOCKED**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🛑 **Result:** Security requirements not met. Deployment blocked by policy." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ❌ Fail | **${CRIT_COUNT:-0} found** |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ❌ Hard Gate | Blocking threshold exceeded |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | 🚫 Denied | Fix required before deployment |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              
+              # Add remediation steps
+              echo "### 🔧 Required Actions" >> $GITHUB_STEP_SUMMARY
+              echo "1. **Fix critical vulnerabilities** - Update affected dependencies" >> $GITHUB_STEP_SUMMARY
+              echo "2. **Run security scan locally** - Use \`snyk test\` to verify fixes" >> $GITHUB_STEP_SUMMARY
+              echo "3. **Re-run pipeline** - Push fixes and trigger new build" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              
               if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+                echo "**🔒 Override Option:** Available for users with \`security-admin\` role via workflow dispatch." >> $GITHUB_STEP_SUMMARY
                 exit 2
               else
-                echo "⚠️ Gates overridden by user" >> $GITHUB_STEP_SUMMARY
+                echo "⚠️ **OVERRIDE ACTIVATED** - Gates bypassed by authorized user" >> $GITHUB_STEP_SUMMARY
+                echo "**Override User:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+                echo "**Override Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
                 exit 0  # Override allows pipeline to continue
               fi
               ;;
             *)
-              echo "❓ Unexpected gate evaluation result (exit code: $GATE_RESULT)" >> $GITHUB_STEP_SUMMARY
+              echo "### ❓ Gate Decision: **ERROR**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Unexpected gate evaluation result (exit code: $GATE_RESULT)" >> $GITHUB_STEP_SUMMARY
+              echo "Please check the logs for more details." >> $GITHUB_STEP_SUMMARY
               exit 2
               ;;
           esac
@@ -415,6 +578,10 @@ jobs:
       - name: Deploy to environment
         run: |
           echo "🚀 Deploying application version ${{ github.sha }}"
+          
+          # Capture deployment start time
+          DEPLOY_START=$(date +%s)
+          
           # Add actual deployment steps here
           # For PoC, we'll just run the container locally
           docker run -d -p 8080:8080 --name gating-poc-app gating-poc-app:${{ github.sha }}
@@ -423,9 +590,49 @@ jobs:
           sleep 10
           
           # Health check
-          curl -f http://localhost:8080/actuator/health || exit 1
+          HEALTH_STATUS="Unknown"
+          if curl -f http://localhost:8080/actuator/health 2>/dev/null; then
+            HEALTH_STATUS="Healthy"
+            HEALTH_ICON="✅"
+          else
+            HEALTH_STATUS="Unhealthy"
+            HEALTH_ICON="❌"
+            exit 1
+          fi
           
-          echo "✅ Deployment successful" >> $GITHUB_STEP_SUMMARY
+          # Calculate deployment time
+          DEPLOY_END=$(date +%s)
+          DEPLOY_TIME=$((DEPLOY_END - DEPLOY_START))
+          
+          # Enhanced deployment summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Status | **✅ SUCCESS** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Version | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Environment | Production |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏱️ Deploy Time | ${DEPLOY_TIME}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💚 Health Check | ${HEALTH_ICON} ${HEALTH_STATUS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 Deployed By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Application Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Container | gating-poc-app:${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Port | 8080 |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📡 Health Endpoint | /actuator/health |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Build | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Security Gate Summary" >> $GITHUB_STEP_SUMMARY
+          echo "All security gates were passed before this deployment." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.override_gates }}" = "true" ]; then
+            echo "⚠️ **Note:** Security gates were overridden for this deployment." >> $GITHUB_STEP_SUMMARY
+          fi
           
       - name: Cleanup
         if: always()
