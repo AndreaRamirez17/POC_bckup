@@ -1,127 +1,283 @@
 {
-  "name": "CI/CD Security Gating Policy",
-  "description": "Security gates for CI/CD pipeline based on Snyk vulnerability scanning",
-  "version": "1.0.0",
+  "name": "CI/CD Safe Deployment Gate Policy",
+  "description": "Safe Deployment Gate policy using inverted ABAC logic - allows deployments when criticalCount = 0",
+  "version": "2.0.0",
+  "policy_type": "ABAC_RESOURCE_SET",
+  "configuration_mode": "PERMIT_IO_CLOUD",
+  
   "resources": [
     {
       "key": "deployment",
       "name": "Deployment",
-      "description": "Application deployment resource",
+      "description": "Base application deployment resource - restricted access for critical vulnerabilities",
       "attributes": {
-        "vulnerabilities": {
-          "type": "object",
-          "description": "Vulnerability data from Snyk scan"
-        },
-        "summary": {
-          "type": "object",
-          "description": "Summary of vulnerabilities by severity"
-        },
         "criticalCount": {
           "type": "number",
-          "description": "Number of critical vulnerabilities"
+          "description": "Number of critical vulnerabilities - used by Safe Deployment Gate condition"
         },
         "highCount": {
-          "type": "number",
+          "type": "number", 
           "description": "Number of high severity vulnerabilities"
         },
         "mediumCount": {
           "type": "number",
           "description": "Number of medium severity vulnerabilities"
+        },
+        "lowCount": {
+          "type": "number",
+          "description": "Number of low severity vulnerabilities"
+        },
+        "vulnerabilities": {
+          "type": "object",
+          "description": "Detailed vulnerability data from Snyk scan"
+        },
+        "summary": {
+          "type": "object", 
+          "description": "Summary of vulnerabilities by severity"
         }
       }
     }
   ],
+
+  "resource_sets": [
+    {
+      "key": "Safe_Deployment_Gate",
+      "name": "Safe Deployment Gate",
+      "description": "Resource Set that matches deployments with NO critical vulnerabilities (criticalCount = 0)",
+      "parent_resource": "deployment",
+      "condition": {
+        "attribute": "criticalCount",
+        "operator": "equals", 
+        "value": 0
+      },
+      "condition_description": "Matches when resource.criticalCount equals 0 (no critical vulnerabilities)"
+    }
+  ],
+
   "actions": [
     {
       "key": "deploy",
-      "name": "Deploy",
+      "name": "Deploy", 
       "description": "Deploy application to environment"
     },
     {
       "key": "promote",
       "name": "Promote",
-      "description": "Promote application to next environment"
+      "description": "Promote application to next environment" 
+    },
+    {
+      "key": "deny",
+      "name": "Deny",
+      "description": "Explicit deny action (not used in current policy)"
     }
   ],
+
   "roles": [
     {
       "key": "developer",
       "name": "Developer",
-      "description": "Development team member",
+      "description": "Development team member - can deploy ONLY safe deployments (no critical vulnerabilities)",
       "permissions": [
         {
-          "resource": "deployment",
+          "resource": "Safe_Deployment_Gate", 
           "action": "deploy",
-          "conditions": {
-            "softGateOnly": true
-          }
+          "effect": "ALLOW",
+          "description": "Can deploy when criticalCount = 0"
+        }
+      ],
+      "restrictions": [
+        {
+          "resource": "deployment",
+          "action": "deploy", 
+          "effect": "DENY",
+          "description": "Cannot deploy on base deployment resource (critical vulnerabilities present)"
         }
       ]
     },
     {
       "key": "devops",
-      "name": "DevOps Engineer",
-      "description": "DevOps team member",
+      "name": "DevOps Engineer", 
+      "description": "DevOps team member - same restrictions as developer",
       "permissions": [
         {
+          "resource": "Safe_Deployment_Gate",
+          "action": "deploy",
+          "effect": "ALLOW"
+        },
+        {
+          "resource": "Safe_Deployment_Gate", 
+          "action": "promote",
+          "effect": "ALLOW"
+        }
+      ],
+      "restrictions": [
+        {
           "resource": "deployment",
-          "action": "deploy"
+          "action": "deploy",
+          "effect": "DENY"
         },
         {
           "resource": "deployment",
-          "action": "promote"
+          "action": "promote", 
+          "effect": "DENY"
+        }
+      ]
+    },
+    {
+      "key": "editor",
+      "name": "Editor",
+      "description": "Editor role with override capabilities - can deploy even with critical vulnerabilities",
+      "permissions": [
+        {
+          "resource": "Safe_Deployment_Gate",
+          "action": "deploy", 
+          "effect": "ALLOW",
+          "description": "Can deploy safe deployments"
+        },
+        {
+          "resource": "deployment",
+          "action": "deploy",
+          "effect": "ALLOW", 
+          "description": "OVERRIDE: Can deploy even with critical vulnerabilities"
+        },
+        {
+          "resource": "deployment",
+          "action": "promote",
+          "effect": "ALLOW"
         }
       ]
     },
     {
       "key": "security",
-      "name": "Security Team",
-      "description": "Security team member with override capabilities",
+      "name": "Security Officer",
+      "description": "Security team member with full override capabilities",
       "permissions": [
         {
-          "resource": "deployment",
+          "resource": "Safe_Deployment_Gate",
           "action": "deploy",
-          "conditions": {
-            "override": true
-          }
+          "effect": "ALLOW"
+        },
+        {
+          "resource": "deployment", 
+          "action": "deploy",
+          "effect": "ALLOW",
+          "description": "OVERRIDE: Security team can deploy with any vulnerability level"
         },
         {
           "resource": "deployment",
           "action": "promote",
-          "conditions": {
-            "override": true
-          }
+          "effect": "ALLOW"
+        }
+      ]
+    },
+    {
+      "key": "ci-pipeline",
+      "name": "CI Pipeline",
+      "description": "Automated CI/CD pipeline - same restrictions as developer", 
+      "permissions": [
+        {
+          "resource": "Safe_Deployment_Gate",
+          "action": "deploy",
+          "effect": "ALLOW"
+        }
+      ],
+      "restrictions": [
+        {
+          "resource": "deployment",
+          "action": "deploy",
+          "effect": "DENY"
         }
       ]
     }
   ],
-  "policies": [
+
+  "policy_logic": {
+    "type": "INVERTED_ABAC",
+    "description": "Safe Deployment Gate uses inverted logic - allow safe deployments rather than block dangerous ones",
+    "decision_matrix": [
+      {
+        "condition": "criticalCount = 0",
+        "resource_set_match": "Safe_Deployment_Gate", 
+        "developer_access": "ALLOW",
+        "rationale": "No critical vulnerabilities - safe to deploy"
+      },
+      {
+        "condition": "criticalCount > 0",
+        "resource_set_match": "None (falls back to base deployment)",
+        "developer_access": "DENY",
+        "editor_access": "ALLOW (override)",
+        "rationale": "Critical vulnerabilities present - requires override"
+      }
+    ]
+  },
+
+  "audit_requirements": {
+    "override_logging": {
+      "required": true,
+      "events": ["editor_deploy_with_critical", "security_officer_override"],
+      "retention": "1_year"
+    },
+    "policy_evaluation": {
+      "log_all_decisions": true,
+      "include_vulnerability_details": true
+    }
+  },
+
+  "gate_configuration": {
+    "hard_gate": {
+      "trigger": "criticalCount > 0 AND role NOT IN [editor, security]",
+      "action": "BLOCK",
+      "exit_code": 2
+    },
+    "soft_gate": {
+      "trigger": "highCount > 0 AND criticalCount = 0", 
+      "action": "WARN",
+      "exit_code": 1
+    },
+    "info_gate": {
+      "trigger": "mediumCount > 0 AND highCount = 0 AND criticalCount = 0",
+      "action": "INFO",
+      "exit_code": 1
+    },
+    "clean_gate": {
+      "trigger": "all vulnerability counts = 0",
+      "action": "PASS", 
+      "exit_code": 0
+    }
+  },
+
+  "implementation_notes": {
+    "permit_io_setup": [
+      "1. Create Resource Set 'Safe Deployment Gate' with condition: resource.criticalCount equals 0",
+      "2. Grant deploy permission on Safe Deployment Gate to: developer, devops, ci-pipeline, editor, security",
+      "3. Grant deploy permission on base Deployment resource to: editor, security (override capability)",
+      "4. Remove deploy permission on base Deployment for: developer, devops, ci-pipeline"
+    ],
+    "testing_scenarios": [
+      "Test 1: Developer + criticalCount=0 → Should PASS (Safe Deployment Gate matches)",
+      "Test 2: Developer + criticalCount>0 → Should FAIL (no permission on base deployment)",
+      "Test 3: Editor + criticalCount>0 → Should PASS (override permission on base deployment)",
+      "Test 4: Security + any criticalCount → Should PASS (full override capability)"
+    ]
+  },
+
+  "version_history": [
     {
-      "key": "critical_vulnerability_gate",
-      "name": "Critical Vulnerability Hard Gate",
-      "description": "Blocks deployment if critical vulnerabilities are found",
-      "type": "ENFORCING",
-      "rule": "resource.attributes.criticalCount == 0",
-      "effect": "DENY",
-      "priority": 1
+      "version": "1.0.0",
+      "description": "Initial hard-coded critical vulnerability blocking",
+      "deprecated": true,
+      "reason": "Did not support role-based overrides properly"
     },
     {
-      "key": "high_vulnerability_gate",
-      "name": "High Vulnerability Soft Gate",
-      "description": "Warns about high severity vulnerabilities but allows deployment",
-      "type": "NON_ENFORCING",
-      "rule": "resource.attributes.highCount == 0",
-      "effect": "WARN",
-      "priority": 2
-    },
-    {
-      "key": "medium_vulnerability_info",
-      "name": "Medium Vulnerability Information",
-      "description": "Provides information about medium severity vulnerabilities",
-      "type": "NON_ENFORCING",
-      "rule": "resource.attributes.mediumCount == 0",
-      "effect": "INFO",
-      "priority": 3
+      "version": "2.0.0", 
+      "description": "Safe Deployment Gate with inverted ABAC logic",
+      "current": true,
+      "improvements": [
+        "Proper role-based override support",
+        "Clearer policy logic with Resource Sets",
+        "Better audit trail and logging",
+        "Simplified testing and validation"
+      ]
     }
   ]
 }

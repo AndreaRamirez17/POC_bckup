@@ -1,140 +1,137 @@
-# Security Gate Decision Matrix - Sequence Diagrams
+# Safe Deployment Gate Decision Matrix - Flow Diagrams
 
-This document provides comprehensive sequence diagrams showing the security gate decision logic, policy evaluation, and different gate scenarios.
+This document provides comprehensive flow diagrams showing the Safe Deployment Gate decision logic using inverted ABAC, policy evaluation, and different gate scenarios with Resource Set matching.
 
-## Gate Decision Flow Overview
+## Safe Deployment Gate Flow Overview
 
 ```mermaid
 flowchart TD
     Start([Start Gate Evaluation]) --> LoadData[Load Vulnerability Data]
     LoadData --> CheckCritical{Critical Vulnerabilities > 0?}
     
-    CheckCritical -->|Yes| CheckRole{User Role?}
-    CheckRole -->|ci-pipeline| HardFail[❌ HARD GATE FAIL]
-    CheckRole -->|editor| EditorOverride[🔓 EDITOR OVERRIDE]
+    CheckCritical -->|No| SafeGate[🟢 Safe Deployment Gate Matches]
+    SafeGate --> CheckHighSafe{High Vulnerabilities > 0?}
+    CheckHighSafe -->|Yes| SoftGate[⚠️ SOFT GATE WARNING]
+    CheckHighSafe -->|No| CheckMediumSafe{Medium Vulnerabilities > 0?}
+    CheckMediumSafe -->|Yes| InfoGate[ℹ️ INFO GATE WARNING]
+    CheckMediumSafe -->|No| CleanPass[✅ CLEAN PASS]
     
-    CheckCritical -->|No| CheckHigh{High Vulnerabilities > 0?}
-    CheckHigh -->|Yes| SoftGate[⚠️ SOFT GATE WARNING]
-    CheckHigh -->|No| CheckMedium{Medium Vulnerabilities > 0?}
+    CheckCritical -->|Yes| BaseResource[🔴 Falls back to Base Deployment]
+    BaseResource --> CheckRole{User Role?}
+    CheckRole -->|developer/ci-pipeline| HardFail[❌ HARD GATE FAIL]
+    CheckRole -->|editor/Security Officer| EditorOverride[🔓 OVERRIDE ALLOWED]
     
-    CheckMedium -->|Yes| InfoGate[ℹ️ INFO GATE WARNING]
-    CheckMedium -->|No| Pass[✅ PASS]
-    
-    HardFail --> ExitFail[Exit Code 2]
-    EditorOverride --> ExitSuccess[Exit Code 0]
+    CleanPass --> ExitSuccess[Exit Code 0]
     SoftGate --> ExitWarning[Exit Code 1]
     InfoGate --> ExitWarning
-    Pass --> ExitSuccess
+    EditorOverride --> ExitSuccess
+    HardFail --> ExitFail[Exit Code 2]
     
+    style SafeGate fill:#44ff44
+    style BaseResource fill:#ff6666
     style HardFail fill:#ff4444
     style EditorOverride fill:#ffaa44
     style SoftGate fill:#ffff44
     style InfoGate fill:#44aaff
-    style Pass fill:#44ff44
+    style CleanPass fill:#00ff00
 ```
 
-## Critical Vulnerability Hard Gate Flow
+## Critical Vulnerability with Safe Deployment Gate Flow
 
 ```mermaid
 sequenceDiagram
     participant Script as evaluate-gates.sh
-    participant Policy as gating_policy.rego
     participant PDP as Permit.io PDP
+    participant ResourceSet as Safe Deployment Gate
     participant Audit as Audit Log
     participant Pipeline as CI/CD Pipeline
 
-    Note over Script, Pipeline: Critical Vulnerability Hard Gate Scenario
+    Note over Script, Pipeline: Critical Vulnerability - Developer Access Denied
 
-    Script->>Policy: Vulnerability data with criticalCount > 0
-    Note right of Script: Example: criticalCount = 1<br/>Critical vulnerability: CVE-2021-44228 (Log4j)
+    Script->>PDP: Authorization request with criticalCount > 0
+    Note right of Script: Example: criticalCount = 1<br/>User: developer<br/>Resource: deployment<br/>Critical vulnerability: CVE-2021-44228 (Log4j)
 
-    Policy->>Policy: Execute hard_gate_fail rule
-    Note right of Policy: hard_gate_fail if {<br/>    input.resource.attributes.criticalCount > 0<br/>}
+    PDP->>ResourceSet: Check Safe Deployment Gate condition
+    Note right of ResourceSet: Condition: resource.criticalCount equals 0<br/>Actual: criticalCount = 1<br/>Result: NO MATCH
 
-    Policy->>Policy: hard_gate_fail = true
-    Policy->>Policy: Create CRITICAL_VULNERABILITY violation
-    Note right of Policy: {<br/>  "type": "CRITICAL_VULNERABILITY",<br/>  "severity": "CRITICAL",<br/>  "action": "FAIL",<br/>  "message": "Found 1 critical vulnerabilities - Build must be stopped"<br/>}
+    ResourceSet-->>PDP: Safe Deployment Gate does not match
+    PDP->>PDP: Fallback to base deployment resource
+    
+    PDP->>PDP: Check developer role permissions on base deployment
+    Note right of PDP: Developer role has NO deploy permission<br/>on base deployment resource
 
-    Policy->>Policy: determine_overall_result([violations])
-    Policy->>Policy: Found violation with action == "FAIL"
-    Policy->>Policy: Return {allow: false, decision: "FAIL"}
+    PDP->>PDP: Authorization decision: DENY
+    PDP->>Audit: Log access denied
+    Note right of Audit: User: developer<br/>Action: deploy<br/>Decision: DENY<br/>Reason: No permission on base deployment<br/>Critical vulns: 1
 
-    Policy-->>PDP: Policy evaluation result
-    PDP->>Audit: Log hard gate failure
-    Note right of Audit: User: github-actions<br/>Action: deploy<br/>Decision: FAIL<br/>Reason: Critical vulnerabilities<br/>Count: 1
-
-    PDP-->>Script: {allow: false, decision: "FAIL", violations: [...]}
+    PDP-->>Script: {"allow": false}
 
     Script->>Script: Parse response - allow = false
-    Script->>Script: ❌ DECISION: FAIL - Hard gate triggered
+    Script->>Script: ❌ DECISION: FAIL - ABAC Rule Blocking
     Script->>Script: Display critical vulnerabilities
     Note right of Script: 🔴 Critical Vulnerabilities Found (1):<br/>  • org.apache.logging.log4j:log4j-core@2.14.1: Remote Code Execution (RCE)
 
-    Script->>Script: 🛑 DEPLOYMENT BLOCKED
+    Script->>Script: 🛑 DEPLOYMENT BLOCKED - Safe Deployment Gate not matched
     Script->>Script: Display recommendations
-    Note right of Script: 📌 Recommendations:<br/>  • Review and fix critical vulnerabilities<br/>  • Update vulnerable dependencies<br/>  • Run security scan again after fixes
+    Note right of Script: 📌 Developer Access Restricted:<br/>  • Fix critical vulnerabilities to enable Safe Deployment Gate<br/>  • Or request editor override for emergency deployment
 
     Script->>Pipeline: Exit code 2 (failure)
-    Pipeline->>Pipeline: ❌ Hard gate failed - deployment blocked
+    Pipeline->>Pipeline: ❌ Safe Deployment Gate failed - deployment blocked
     Pipeline->>Pipeline: Stop pipeline execution
 ```
 
-## High Severity Soft Gate Flow
+## Safe Deployment with High Vulnerabilities Flow
 
 ```mermaid
 sequenceDiagram
     participant Script as evaluate-gates.sh
-    participant Policy as gating_policy.rego
     participant PDP as Permit.io PDP
+    participant ResourceSet as Safe Deployment Gate
     participant Audit as Audit Log
     participant Pipeline as CI/CD Pipeline
 
-    Note over Script, Pipeline: High Severity Soft Gate Scenario
+    Note over Script, Pipeline: Safe Deployment with High Severity Vulnerabilities
 
-    Script->>Policy: Vulnerability data with highCount > 0, criticalCount = 0
-    Note right of Script: Example: highCount = 2<br/>High vulnerabilities: CVE-2015-6420 (Commons Collections)
+    Script->>PDP: Authorization request with criticalCount = 0, highCount > 0
+    Note right of Script: Example: criticalCount = 0, highCount = 2<br/>User: developer<br/>High vulnerabilities: CVE-2015-6420 (Commons Collections)
 
-    Policy->>Policy: Execute hard_gate_fail rule
-    Policy->>Policy: hard_gate_fail = false (no critical vulns)
+    PDP->>ResourceSet: Check Safe Deployment Gate condition
+    Note right of ResourceSet: Condition: resource.criticalCount equals 0<br/>Actual: criticalCount = 0<br/>Result: MATCH ✅
 
-    Policy->>Policy: Execute soft_gate_warn rule
-    Note right of Policy: soft_gate_warn if {<br/>    input.resource.attributes.highCount > 0<br/>}
+    ResourceSet-->>PDP: Safe Deployment Gate matches!
+    PDP->>PDP: Check developer role permissions on Safe Deployment Gate
+    Note right of PDP: Developer role has deploy permission<br/>on Safe Deployment Gate resource
 
-    Policy->>Policy: soft_gate_warn = true
-    Policy->>Policy: Create HIGH_VULNERABILITY violation
-    Note right of Policy: {<br/>  "type": "HIGH_VULNERABILITY",<br/>  "severity": "HIGH",<br/>  "action": "WARN",<br/>  "message": "Found 2 high severity vulnerabilities - Review recommended"<br/>}
+    PDP->>PDP: Authorization decision: ALLOW
+    PDP->>Audit: Log safe deployment allowed
+    Note right of Audit: User: developer<br/>Action: deploy<br/>Decision: ALLOW<br/>Reason: Safe Deployment Gate matched<br/>High vulns: 2 (non-blocking)
 
-    Policy->>Policy: determine_overall_result([violations])
-    Policy->>Policy: Found violation with action == "WARN"
-    Policy->>Policy: Return {allow: true, decision: "PASS_WITH_WARNINGS"}
-
-    Policy-->>PDP: Policy evaluation result
-    PDP->>Audit: Log soft gate warning
-    Note right of Audit: User: github-actions<br/>Action: deploy<br/>Decision: PASS_WITH_WARNINGS<br/>High vulns: 2
-
-    PDP-->>Script: {allow: true, decision: "PASS_WITH_WARNINGS", violations: [...]}
+    PDP-->>Script: {"allow": true}
 
     Script->>Script: Parse response - allow = true
-    Script->>Script: ⚠️ DECISION: PASS WITH WARNINGS - Soft gate triggered
+    Script->>Script: ✅ DECISION: PASS - Safe Deployment Gate matched
+    Script->>Script: Analyze non-blocking vulnerabilities
+    Script->>Script: ⚠️ SOFT GATE: High severity vulnerabilities detected
     Script->>Script: Display high severity vulnerabilities
     Note right of Script: High severity vulnerabilities (showing first 5):<br/>  • commons-collections:commons-collections@3.2.1: Deserialization of Untrusted Data
 
-    Script->>Script: ⚡ High severity vulnerabilities detected
+    Script->>Script: ⚡ Safe deployment proceeding with warnings
     Script->>Script: Review recommended before production deployment
 
     Script->>Pipeline: Exit code 1 (warning)
-    Pipeline->>Pipeline: ⚠️ Soft gate warnings - proceeding with caution
+    Pipeline->>Pipeline: ✅ Safe Deployment Gate passed - proceeding with warnings
     Pipeline->>Pipeline: Continue to next job (deployment allowed)
 ```
 
-## Editor Override Flow
+## Editor Override with Safe Deployment Gate Flow
 
 ```mermaid
 sequenceDiagram
     participant Admin as Security Admin
     participant Script as evaluate-gates.sh
-    participant Policy as gating_policy.rego
     participant PDP as Permit.io PDP
+    participant ResourceSet as Safe Deployment Gate
+    participant BaseResource as Base Deployment
     participant Audit as Audit Log
     participant Pipeline as CI/CD Pipeline
 
@@ -144,173 +141,177 @@ sequenceDiagram
     Admin->>Admin: Document business justification
     Admin->>Script: Set USER_ROLE=editor, USER_KEY=admin_user
 
-    Script->>Policy: Authorization request with editor role
+    Script->>PDP: Authorization request with editor role and criticalCount > 0
     Note right of Script: user.attributes.role = "editor"<br/>criticalCount = 1 (still present)
 
-    Policy->>Policy: Execute hard_gate_fail rule
-    Policy->>Policy: hard_gate_fail = true (critical vulns present)
+    PDP->>ResourceSet: Check Safe Deployment Gate condition
+    Note right of ResourceSet: Condition: resource.criticalCount equals 0<br/>Actual: criticalCount = 1<br/>Result: NO MATCH
 
-    Policy->>Policy: Check user role in context
-    Policy->>Policy: input.user.attributes.role == "editor"
+    ResourceSet-->>PDP: Safe Deployment Gate does not match
+    PDP->>BaseResource: Fallback to base deployment resource
+    
+    PDP->>BaseResource: Check editor role permissions on base deployment
+    Note right of BaseResource: Editor role has deploy permission<br/>on base deployment resource<br/>OVERRIDE CAPABILITY ✅
 
-    Policy->>Policy: Editor override logic
-    Note right of Policy: If user is editor AND has deploy permission:<br/>Allow deployment despite critical vulnerabilities
-
-    Policy->>Policy: Create EDITOR_OVERRIDE decision
-    Policy->>Policy: Return {allow: true, decision: "EDITOR_OVERRIDE"}
-
-    Policy-->>PDP: Override authorization decision
+    BaseResource-->>PDP: Editor has override permission
+    PDP->>PDP: Authorization decision: ALLOW (Override)
+    
     PDP->>Audit: Log editor override event
-    Note right of Audit: CRITICAL OVERRIDE EVENT:<br/>User: admin_user<br/>Role: editor<br/>Critical vulns: 1<br/>Override reason: Emergency deployment<br/>Timestamp: 2025-08-12T15:30:00Z
+    Note right of Audit: CRITICAL OVERRIDE EVENT:<br/>User: admin_user<br/>Role: editor<br/>Action: deploy<br/>Resource: base deployment<br/>Critical vulns: 1<br/>Override reason: Emergency deployment<br/>Timestamp: 2025-08-15T15:30:00Z
 
-    PDP-->>Script: {allow: true, decision: "EDITOR_OVERRIDE", audit_trail: {...}}
+    PDP-->>Script: {"allow": true}
 
-    Script->>Script: Detect is_editor_override = true
+    Script->>Script: Detect allow = true with criticalCount > 0
     Script->>Script: 🔓 DECISION: EDITOR OVERRIDE
     Script->>Script: Display override context
-    Note right of Script: ⚠️ Editor Override Active:<br/>  • User Role: editor<br/>  • Critical vulnerabilities present: 1
+    Note right of Script: ⚠️ Editor Override Active:<br/>  • User Role: editor<br/>  • Safe Deployment Gate: NOT matched<br/>  • Base Deployment Resource: Override permission used
 
     Script->>Script: Display critical vulnerabilities being overridden
     Note right of Script: 🔴 Critical Vulnerabilities (Editor Override Applied):<br/>  • org.apache.logging.log4j:log4j-core@2.14.1: Remote Code Execution (RCE)
 
-    Script->>Script: ⚡ DEPLOYMENT PROCEEDING: Editor has overridden security gates
-    Script->>Script: Ensure critical vulnerabilities are addressed post-deployment
+    Script->>Script: ⚡ DEPLOYMENT PROCEEDING: Editor override active
+    Script->>Script: Post-deployment remediation required
 
     Script->>Pipeline: Exit code 0 (proceed with override)
-    Pipeline->>Pipeline: ⚠️ Gates overridden by user
-    Pipeline->>Pipeline: Continue deployment with audit trail
+    Pipeline->>Pipeline: 🔓 Safe Deployment Gate bypassed by editor override
+    Pipeline->>Pipeline: Continue deployment with full audit trail
 
     Note over Admin: Post-deployment Actions Required:
     Note over Admin: 1. Address critical vulnerabilities immediately
     Note over Admin: 2. Document incident and justification
     Note over Admin: 3. Security review and lessons learned
-    Note over Admin: 4. Revert to normal gate enforcement
+    Note over Admin: 4. Return to Safe Deployment Gate enforcement
 ```
 
-## Medium Severity Info Gate Flow
+## Safe Deployment with Medium Vulnerabilities Flow
 
 ```mermaid
 sequenceDiagram
     participant Script as evaluate-gates.sh
-    participant Policy as gating_policy.rego
     participant PDP as Permit.io PDP
+    participant ResourceSet as Safe Deployment Gate
     participant Pipeline as CI/CD Pipeline
 
-    Note over Script, Pipeline: Medium Severity Info Gate Scenario
+    Note over Script, Pipeline: Safe Deployment with Medium Severity Vulnerabilities
 
-    Script->>Policy: Vulnerability data with mediumCount > 0, no critical/high
-    Note right of Script: Example: mediumCount = 3<br/>Medium vulnerabilities: CVE-2019-xxx (Jackson Databind)
+    Script->>PDP: Authorization request with mediumCount > 0, no critical/high
+    Note right of Script: Example: mediumCount = 3<br/>User: developer<br/>Medium vulnerabilities: CVE-2019-xxx (Jackson Databind)
 
-    Policy->>Policy: Execute hard_gate_fail rule
-    Policy->>Policy: hard_gate_fail = false (no critical vulns)
+    PDP->>ResourceSet: Check Safe Deployment Gate condition
+    Note right of ResourceSet: Condition: resource.criticalCount equals 0<br/>Actual: criticalCount = 0<br/>Result: MATCH ✅
 
-    Policy->>Policy: Execute soft_gate_warn rule
-    Policy->>Policy: soft_gate_warn = false (no high vulns)
+    ResourceSet-->>PDP: Safe Deployment Gate matches!
+    PDP->>PDP: Check developer role permissions on Safe Deployment Gate
+    Note right of PDP: Developer role has deploy permission<br/>on Safe Deployment Gate resource
 
-    Policy->>Policy: Execute medium_warn rule
-    Note right of Policy: medium_warn if {<br/>    input.resource.attributes.mediumCount > 0<br/>}
-
-    Policy->>Policy: medium_warn = true
-    Policy->>Policy: Create MEDIUM_VULNERABILITY violation
-    Note right of Policy: {<br/>  "type": "MEDIUM_VULNERABILITY",<br/>  "severity": "MEDIUM",<br/>  "action": "INFO",<br/>  "message": "Found 3 medium severity vulnerabilities - Consider reviewing"<br/>}
-
-    Policy->>Policy: determine_overall_result([violations])
-    Policy->>Policy: No FAIL or WARN actions, only INFO
-    Policy->>Policy: Return {allow: true, decision: "PASS_WITH_INFO"}
-
-    Policy-->>PDP: Policy evaluation result
-    PDP-->>Script: {allow: true, decision: "PASS_WITH_INFO", violations: [...]}
+    PDP->>PDP: Authorization decision: ALLOW
+    PDP-->>Script: {"allow": true}
 
     Script->>Script: Parse response - allow = true
-    Script->>Script: ℹ️ DECISION: PASS WITH INFO - Informational findings
+    Script->>Script: ✅ DECISION: PASS - Safe Deployment Gate matched
+    Script->>Script: Analyze non-blocking vulnerabilities
+    Script->>Script: ℹ️ INFO GATE: Medium severity vulnerabilities detected
     Script->>Script: Display medium severity vulnerabilities
     Note right of Script: Medium severity vulnerabilities (showing first 5):<br/>  • com.fasterxml.jackson.core:jackson-databind@2.9.10.1: Deserialization
 
-    Script->>Script: 💡 Medium severity vulnerabilities detected
+    Script->>Script: 💡 Safe deployment proceeding with info
     Script->>Script: Consider remediation in next maintenance window
 
     Script->>Pipeline: Exit code 1 (informational warning)
-    Pipeline->>Pipeline: Continue deployment (info only)
+    Pipeline->>Pipeline: ✅ Safe Deployment Gate passed - proceeding with info
+    Pipeline->>Pipeline: Continue deployment (medium vulnerabilities noted)
 ```
 
-## Clean Build Pass Flow
+## Clean Safe Deployment Flow
 
 ```mermaid
 sequenceDiagram
     participant Script as evaluate-gates.sh
-    participant Policy as gating_policy.rego
     participant PDP as Permit.io PDP
+    participant ResourceSet as Safe Deployment Gate
     participant Pipeline as CI/CD Pipeline
 
-    Note over Script, Pipeline: Clean Build - No Vulnerabilities
+    Note over Script, Pipeline: Clean Build - No Vulnerabilities (Perfect Safe Deployment)
 
-    Script->>Policy: Vulnerability data with all counts = 0
-    Note right of Script: criticalCount = 0<br/>highCount = 0<br/>mediumCount = 0<br/>lowCount = 0
+    Script->>PDP: Authorization request with all vulnerability counts = 0
+    Note right of Script: criticalCount = 0<br/>highCount = 0<br/>mediumCount = 0<br/>lowCount = 0<br/>User: developer
 
-    Policy->>Policy: Execute hard_gate_fail rule
-    Policy->>Policy: hard_gate_fail = false (criticalCount = 0)
+    PDP->>ResourceSet: Check Safe Deployment Gate condition
+    Note right of ResourceSet: Condition: resource.criticalCount equals 0<br/>Actual: criticalCount = 0<br/>Result: PERFECT MATCH ✅
 
-    Policy->>Policy: Execute soft_gate_warn rule
-    Policy->>Policy: soft_gate_warn = false (highCount = 0)
+    ResourceSet-->>PDP: Safe Deployment Gate matches perfectly!
+    PDP->>PDP: Check developer role permissions on Safe Deployment Gate
+    Note right of PDP: Developer role has deploy permission<br/>on Safe Deployment Gate resource
 
-    Policy->>Policy: Execute medium_warn rule
-    Policy->>Policy: medium_warn = false (mediumCount = 0)
+    PDP->>PDP: Authorization decision: ALLOW
+    PDP-->>Script: {"allow": true}
 
-    Policy->>Policy: evaluate_gates function
-    Policy->>Policy: No violations created (all counts = 0)
-    Policy->>Policy: determine_overall_result([]) - empty violations array
-
-    Policy->>Policy: count(violations) == 0
-    Policy->>Policy: Return {allow: true, decision: "PASS"}
-
-    Policy-->>PDP: Policy evaluation result
-    PDP-->>Script: {allow: true, decision: "PASS", violations: []}
-
-    Script->>Script: Parse response - allow = true, decision = "PASS"
-    Script->>Script: ✅ DECISION: PASS - All security gates passed
+    Script->>Script: Parse response - allow = true
+    Script->>Script: ✅ DECISION: PASS - Safe Deployment Gate matched
+    Script->>Script: Analyze vulnerability profile
+    Script->>Script: 🎉 CLEAN BUILD: No vulnerabilities detected
     Script->>Script: Display vulnerability summary (all zeros)
-    Note right of Script: 📊 Vulnerability Summary:<br/>  • Critical: 0<br/>  • High: 0<br/>  • Medium: 0<br/>  • Low: 0<br/>  • Total: 0
+    Note right of Script: 📊 Vulnerability Summary:<br/>  • Critical: 0 ✅<br/>  • High: 0 ✅<br/>  • Medium: 0 ✅<br/>  • Low: 0 ✅<br/>  • Total: 0 - CLEAN!
 
-    Script->>Script: 🎉 No blocking vulnerabilities found. Deployment can proceed.
+    Script->>Script: 🚀 Perfect safe deployment - no security concerns
+    Script->>Script: Deployment can proceed without restrictions
 
     Script->>Pipeline: Exit code 0 (success)
-    Pipeline->>Pipeline: ✅ All security gates passed
-    Pipeline->>Pipeline: Continue to deployment
+    Pipeline->>Pipeline: ✅ Safe Deployment Gate passed perfectly
+    Pipeline->>Pipeline: Continue to deployment with confidence
 ```
 
-## Policy Evaluation Decision Tree
+## Safe Deployment Gate Decision Tree
 
 ```mermaid
 flowchart TD
     Input[Vulnerability Input Data] --> Critical{criticalCount > 0?}
     
-    Critical -->|Yes| RoleCheck{User Role?}
-    RoleCheck -->|ci-pipeline| Fail[FAIL<br/>❌ Hard Gate<br/>Exit Code 2]
-    RoleCheck -->|editor| Override[EDITOR_OVERRIDE<br/>🔓 Emergency Override<br/>Exit Code 0]
-    
-    Critical -->|No| High{highCount > 0?}
-    High -->|Yes| Warning[PASS_WITH_WARNINGS<br/>⚠️ Soft Gate<br/>Exit Code 1]
+    Critical -->|No| SafeGate[🟢 Safe Deployment Gate<br/>MATCHES]    
+    SafeGate --> High{highCount > 0?}
+    High -->|Yes| SafeWarning[SAFE DEPLOYMENT<br/>⚠️ With High Vuln Warnings<br/>Exit Code 1]
     High -->|No| Medium{mediumCount > 0?}
+    Medium -->|Yes| SafeInfo[SAFE DEPLOYMENT<br/>ℹ️ With Medium Vuln Info<br/>Exit Code 1]
+    Medium -->|No| SafeClean[SAFE DEPLOYMENT<br/>✅ Perfect Clean Build<br/>Exit Code 0]
     
-    Medium -->|Yes| Info[PASS_WITH_INFO<br/>ℹ️ Info Gate<br/>Exit Code 1]
-    Medium -->|No| Clean[PASS<br/>✅ Clean Build<br/>Exit Code 0]
+    Critical -->|Yes| BaseResource[🔴 Base Deployment<br/>Resource Fallback]
+    BaseResource --> RoleCheck{User Role?}
+    RoleCheck -->|developer/ci-pipeline| Denied[ACCESS DENIED<br/>❌ No Override Permission<br/>Exit Code 2]
+    RoleCheck -->|editor/Security Officer| Override[OVERRIDE ALLOWED<br/>🔓 Emergency Override<br/>Exit Code 0]
     
-    style Fail fill:#ff4444,stroke:#333,stroke-width:2px,color:#fff
+    style SafeGate fill:#44ff44,stroke:#333,stroke-width:3px
+    style BaseResource fill:#ff6666,stroke:#333,stroke-width:3px
+    style Denied fill:#ff4444,stroke:#333,stroke-width:2px,color:#fff
     style Override fill:#ffaa44,stroke:#333,stroke-width:2px
-    style Warning fill:#ffff44,stroke:#333,stroke-width:2px
-    style Info fill:#44aaff,stroke:#333,stroke-width:2px,color:#fff
-    style Clean fill:#44ff44,stroke:#333,stroke-width:2px
+    style SafeWarning fill:#ffff44,stroke:#333,stroke-width:2px
+    style SafeInfo fill:#44aaff,stroke:#333,stroke-width:2px,color:#fff
+    style SafeClean fill:#00ff00,stroke:#333,stroke-width:2px
 ```
 
-## Gate Configuration Matrix
+## Safe Deployment Gate Configuration Matrix
 
-| Severity | Count | User Role | Gate Type | Decision | Exit Code | Action |
-|----------|-------|-----------|-----------|----------|-----------|---------|
-| Critical | > 0 | ci-pipeline | Hard Gate | FAIL | 2 | Block Deployment |
-| Critical | > 0 | editor | Override | EDITOR_OVERRIDE | 0 | Allow with Audit |
-| High | > 0 | Any | Soft Gate | PASS_WITH_WARNINGS | 1 | Allow with Warning |
-| Medium | > 0 | Any | Info Gate | PASS_WITH_INFO | 1 | Allow with Info |
-| None | 0 | Any | Pass | PASS | 0 | Allow |
+| Critical Count | Resource Set Match | User Role | Gate Type | Decision | Exit Code | Action |
+|----------------|-------------------|-----------|-----------|----------|-----------|---------|
+| 0 | Safe Deployment Gate | Any | Safe Deployment | ALLOW | 0/1* | Deploy Safely |
+| > 0 | Base Deployment | developer/ci-pipeline | Access Denied | DENY | 2 | Block Deployment |
+| > 0 | Base Deployment | editor/Security Officer | Override Gate | ALLOW | 0 | Override with Audit |
+
+*Exit Code 0 for clean builds, 1 for builds with high/medium vulnerabilities (non-blocking)
+
+### Resource Set Matching Logic
+
+| Condition | Resource Set | Matches When | Available To |
+|-----------|-------------|--------------|-------------|
+| `criticalCount = 0` | Safe Deployment Gate | No critical vulnerabilities | All roles (developer, editor, Security Officer, ci-pipeline) |
+| `criticalCount > 0` | Base Deployment | Critical vulnerabilities present | Override roles only (editor, Security Officer) |
+
+### Vulnerability Level Processing (After Resource Set Match)
+
+| Vulnerability Profile | Safe Deployment Gate Match | Result | Exit Code |
+|-----------------------|----------------------------|--------|-----------|
+| No vulnerabilities | ✅ YES | Clean Safe Deployment | 0 |
+| High/Medium only | ✅ YES | Safe Deployment with Warnings/Info | 1 |
+| Critical present | ❌ NO | Falls back to Base Deployment | Depends on role |
 
 ## Audit Trail Requirements
 

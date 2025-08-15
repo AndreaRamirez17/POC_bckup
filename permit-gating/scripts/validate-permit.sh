@@ -215,11 +215,17 @@ test_authorization() {
     
     print_color "$GREEN" "✓ PDP container is running"
     
-    # Create a test authorization request payload
+    # Create a test authorization request payload for Safe Deployment Gate
     # This simulates checking if a developer can deploy with no critical vulnerabilities
+    # With inverted ABAC logic: criticalCount=0 should match Safe Deployment Gate
     local auth_payload=$(cat <<EOF
 {
-    "user": "test-developer",
+    "user": {
+        "key": "test-developer-user",
+        "attributes": {
+            "role": "developer"
+        }
+    },
     "action": "deploy",
     "resource": {
         "type": "deployment",
@@ -227,14 +233,19 @@ test_authorization() {
             "criticalCount": 0,
             "highCount": 2,
             "mediumCount": 5,
+            "lowCount": 0,
             "summary": {
-                "total": 7
+                "total": 7,
+                "critical": 0,
+                "high": 2,
+                "medium": 5,
+                "low": 0
             },
             "vulnerabilities": {
                 "critical": [],
                 "high": [
-                    {"id": "SNYK-TEST-1", "severity": "high"},
-                    {"id": "SNYK-TEST-2", "severity": "high"}
+                    {"id": "SNYK-TEST-1", "severity": "high", "title": "High severity test vulnerability"},
+                    {"id": "SNYK-TEST-2", "severity": "high", "title": "Another high severity vulnerability"}
                 ],
                 "medium": []
             }
@@ -263,17 +274,19 @@ EOF
             
             print_color "$GREEN" "✓ Authorization request successful"
             print_color "$GREEN" "  Test scenario: Developer deploying with 0 critical, 2 high vulnerabilities"
+            print_color "$GREEN" "  Expected: ALLOWED (Safe Deployment Gate should match with criticalCount=0)"
             
             if [ "$is_allowed" = "true" ]; then
-                print_color "$GREEN" "  Result: Deployment ALLOWED (soft gate - warnings only)"
+                print_color "$GREEN" "  ✅ Result: Deployment ALLOWED (Safe Deployment Gate working correctly)"
                 if [ "$decision" != "N/A" ]; then
                     print_color "$GREEN" "  Decision: $decision"
                 fi
             else
-                print_color "$YELLOW" "  Result: Deployment DENIED (as expected for hard gates)"
+                print_color "$RED" "  ❌ Result: Deployment DENIED (Safe Deployment Gate may not be configured correctly)"
                 if [ "$decision" != "N/A" ]; then
-                    print_color "$YELLOW" "  Decision: $decision"
+                    print_color "$RED" "  Decision: $decision"
                 fi
+                print_color "$YELLOW" "  This suggests the ABAC Safe Deployment Gate is not working as expected"
             fi
             
             # Show any violations if present
@@ -300,12 +313,17 @@ EOF
         echo "Note: PDP may be using a different API format or configuration"
     fi
     
-    # Test with critical vulnerabilities (should fail)
-    print_color "$YELLOW" "Testing hard gate (critical vulnerabilities)..."
+    # Test with critical vulnerabilities (should fail for developer)
+    print_color "$YELLOW" "Testing hard gate (critical vulnerabilities should be BLOCKED for developer)..."
     
     local critical_payload=$(cat <<EOF
 {
-    "user": "test-developer",
+    "user": {
+        "key": "test-developer-user",
+        "attributes": {
+            "role": "developer"
+        }
+    },
     "action": "deploy",
     "resource": {
         "type": "deployment",
@@ -313,11 +331,16 @@ EOF
             "criticalCount": 1,
             "highCount": 0,
             "mediumCount": 0,
+            "lowCount": 0,
             "summary": {
-                "total": 1
+                "total": 1,
+                "critical": 1,
+                "high": 0,
+                "medium": 0,
+                "low": 0
             },
             "vulnerabilities": {
-                "critical": [{"id": "CRITICAL-1", "severity": "critical"}],
+                "critical": [{"id": "CRITICAL-1", "severity": "critical", "title": "Critical vulnerability test"}],
                 "high": [],
                 "medium": []
             }
@@ -337,11 +360,45 @@ EOF
         if echo "$critical_response" | jq -e '.allow' > /dev/null 2>&1; then
             local is_allowed=$(echo "$critical_response" | jq -r '.allow')
             
+            print_color "$GREEN" "  Test scenario: Developer with 1 critical vulnerability"
+            print_color "$GREEN" "  Expected: BLOCKED (Safe Deployment Gate should NOT match with criticalCount>0)"
+            
             if [ "$is_allowed" = "false" ]; then
-                print_color "$GREEN" "✓ Hard gate working correctly (deployment blocked for critical vulnerabilities)"
+                print_color "$GREEN" "  ✅ Hard gate working correctly (developer blocked for critical vulnerabilities)"
+                print_color "$GREEN" "  Safe Deployment Gate logic: criticalCount > 0 falls back to base deployment (no permissions)"
             else
-                print_color "$YELLOW" "⚠ Hard gate test unexpected: deployment was allowed with critical vulnerabilities"
-                echo "This may indicate policy sync is still in progress"
+                print_color "$YELLOW" "  ⚠ Hard gate test unexpected: developer was allowed with critical vulnerabilities"
+                print_color "$YELLOW" "  This may indicate:"
+                print_color "$YELLOW" "    - Policy sync is still in progress"
+                print_color "$YELLOW" "    - Safe Deployment Gate condition may be incorrect"
+                print_color "$YELLOW" "    - Developer has unexpected override permissions"
+            fi
+        fi
+    fi
+    
+    # Test editor override with critical vulnerabilities
+    print_color "$YELLOW" "Testing editor override with critical vulnerabilities..."
+    
+    local editor_payload=$(echo "$critical_payload" | jq '.user.attributes.role = "editor" | .user.key = "david-santander"')
+    
+    local editor_response=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $PERMIT_API_KEY" \
+        -d "$editor_payload" \
+        http://localhost:7766/allowed 2>/dev/null)
+    
+    if [ -n "$editor_response" ]; then
+        if echo "$editor_response" | jq -e '.allow' > /dev/null 2>&1; then
+            local is_allowed=$(echo "$editor_response" | jq -r '.allow')
+            
+            print_color "$GREEN" "  Test scenario: Editor with 1 critical vulnerability"
+            print_color "$GREEN" "  Expected: ALLOWED (Editor should have override permissions)"
+            
+            if [ "$is_allowed" = "true" ]; then
+                print_color "$GREEN" "  ✅ Override working correctly (editor can deploy despite critical vulnerabilities)"
+            else
+                print_color "$YELLOW" "  ⚠ Override test unexpected: editor was blocked with critical vulnerabilities"
+                print_color "$YELLOW" "  This may indicate editor role lacks override permissions"
             fi
         fi
     fi

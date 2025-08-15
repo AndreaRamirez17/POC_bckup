@@ -3,146 +3,118 @@ package banamex.gating
 import future.keywords.if
 import future.keywords.in
 
-# Default deny
+# IMPORTANT: This Rego policy is for reference only
+# The actual ABAC logic is now handled by Permit.io cloud configuration
+# with Safe Deployment Gate Resource Set (criticalCount = 0)
+
+# Default deny for demonstration purposes
 default allow = false
 
-# Hard Gate: FAIL on Critical vulnerabilities
-hard_gate_fail if {
+# Safe Deployment Gate Logic (for reference)
+# In Permit.io configuration:
+# - Resource Set: "Safe Deployment Gate" matches when criticalCount = 0
+# - Developers get deploy permission ONLY on Safe Deployment Gate
+# - Critical vulnerabilities (criticalCount > 0) fall back to base deployment resource
+# - Only editor/Security Officer roles have deploy permission on base deployment
+
+# Reference vulnerability analysis functions
+critical_vulnerabilities_present if {
     input.resource.attributes.criticalCount > 0
 }
 
-# Soft Gate: WARN on High vulnerabilities  
-soft_gate_warn if {
+high_vulnerabilities_present if {
     input.resource.attributes.highCount > 0
 }
 
-# Medium vulnerabilities informational warning
-medium_warn if {
+medium_vulnerabilities_present if {
     input.resource.attributes.mediumCount > 0
 }
 
-# Main allow decision with detailed response
-allow = response if {
-    response := evaluate_gates
+# Safe deployment check (matches Permit.io Resource Set condition)
+safe_deployment if {
+    input.resource.attributes.criticalCount == 0
 }
 
-# Evaluate all gates and return structured response
-evaluate_gates = result if {
-    # Check for hard gate violations
-    hard_gate_violations := [msg |
-        hard_gate_fail
-        msg := {
-            "type": "CRITICAL_VULNERABILITY",
-            "severity": "CRITICAL",
-            "action": "FAIL",
-            "message": sprintf("Found %d critical vulnerabilities - Build must be stopped", [input.resource.attributes.criticalCount]),
-            "vulnerabilities": input.resource.attributes.vulnerabilities.critical
-        }
-    ]
-    
-    # Check for soft gate violations
-    soft_gate_violations := [msg |
-        soft_gate_warn
-        not hard_gate_fail  # Only warn if not already failing
-        msg := {
-            "type": "HIGH_VULNERABILITY",
-            "severity": "HIGH",
-            "action": "WARN",
-            "message": sprintf("Found %d high severity vulnerabilities - Review recommended", [input.resource.attributes.highCount]),
-            "vulnerabilities": input.resource.attributes.vulnerabilities.high
-        }
-    ]
-    
-    # Check for medium severity warnings
-    medium_violations := [msg |
-        medium_warn
-        not hard_gate_fail  # Only warn if not already failing
-        not soft_gate_warn  # Only warn if not already warning for high
-        msg := {
-            "type": "MEDIUM_VULNERABILITY",
-            "severity": "MEDIUM",
-            "action": "INFO",
-            "message": sprintf("Found %d medium severity vulnerabilities - Consider reviewing", [input.resource.attributes.mediumCount]),
-            "vulnerabilities": input.resource.attributes.vulnerabilities.medium
-        }
-    ]
-    
-    # Combine all violations
-    all_violations := array.concat(hard_gate_violations, array.concat(soft_gate_violations, medium_violations))
-    
-    # Determine overall result
-    overall_result := determine_overall_result(all_violations)
-    
-    # Build final response
-    result := {
-        "allow": overall_result.allow,
-        "decision": overall_result.decision,
-        "timestamp": time.now_ns(),
-        "project_id": input.resource.id,
-        "summary": {
-            "critical_count": input.resource.attributes.criticalCount,
-            "high_count": input.resource.attributes.highCount,
-            "medium_count": input.resource.attributes.mediumCount,
-            "total_vulnerabilities": input.resource.attributes.summary.total
-        },
-        "violations": all_violations,
-        "recommendations": get_recommendations(overall_result.decision)
-    }
+# Risk assessment for reference
+risk_level = "CRITICAL" if {
+    critical_vulnerabilities_present
+} else = "HIGH" if {
+    high_vulnerabilities_present
+} else = "MEDIUM" if {
+    medium_vulnerabilities_present
+} else = "LOW"
+
+# Vulnerability summary for auditing
+vulnerability_summary = {
+    "critical": input.resource.attributes.criticalCount,
+    "high": input.resource.attributes.highCount,
+    "medium": input.resource.attributes.mediumCount,
+    "low": input.resource.attributes.lowCount,
+    "total": input.resource.attributes.criticalCount + 
+             input.resource.attributes.highCount + 
+             input.resource.attributes.mediumCount + 
+             input.resource.attributes.lowCount,
+    "risk_level": risk_level,
+    "safe_deployment": safe_deployment
 }
 
-# Determine overall result based on violations
-determine_overall_result(violations) = result if {
-    count(violations) == 0
-    result := {
-        "allow": true,
-        "decision": "PASS"
-    }
-} else = result if {
-    some violation in violations
-    violation.action == "FAIL"
-    result := {
-        "allow": false,
-        "decision": "FAIL"
-    }
-} else = result if {
-    some violation in violations
-    violation.action == "WARN"
-    result := {
-        "allow": true,
-        "decision": "PASS_WITH_WARNINGS"
-    }
-} else = result if {
-    result := {
-        "allow": true,
-        "decision": "PASS_WITH_INFO"
-    }
+# Gate decision logic (for reference - actual decisions made by Permit.io)
+gate_decision = {
+    "action": "BLOCK",
+    "reason": "Critical vulnerabilities present - requires override",
+    "gate_type": "HARD_GATE"
+} if {
+    critical_vulnerabilities_present
+    input.user.attributes.role != "editor"
+    input.user.attributes.role != "Security Officer"
+} else = {
+    "action": "OVERRIDE",
+    "reason": "Editor/Security Officer override for critical vulnerabilities",
+    "gate_type": "OVERRIDE_GATE"
+} if {
+    critical_vulnerabilities_present
+    input.user.attributes.role in ["editor", "Security Officer"]
+} else = {
+    "action": "WARNING",
+    "reason": "High severity vulnerabilities detected",
+    "gate_type": "SOFT_GATE"
+} if {
+    high_vulnerabilities_present
+} else = {
+    "action": "INFO",
+    "reason": "Medium severity vulnerabilities detected",
+    "gate_type": "INFO_GATE"
+} else = {
+    "action": "PASS",
+    "reason": "No significant vulnerabilities detected",
+    "gate_type": "CLEAN_GATE"
 }
 
-# Get recommendations based on decision
-get_recommendations(decision) = recommendations if {
-    decision == "FAIL"
-    recommendations := [
-        "Critical vulnerabilities detected - immediate action required",
-        "Update vulnerable dependencies to secure versions",
-        "Run 'snyk fix' to apply available patches",
-        "Review security advisory for each critical vulnerability",
-        "Consider requesting an exception if remediation is not immediately possible"
-    ]
-} else = recommendations if {
-    decision == "PASS_WITH_WARNINGS"
-    recommendations := [
-        "High severity vulnerabilities detected - review recommended",
-        "Plan remediation for high severity issues",
-        "Monitor for available patches",
-        "Consider impact on production systems"
-    ]
-} else = recommendations if {
-    decision == "PASS_WITH_INFO"
-    recommendations := [
-        "Medium severity vulnerabilities detected",
-        "Schedule remediation in next maintenance window",
-        "Keep dependencies up to date"
-    ]
-} else = recommendations if {
-    recommendations := ["No vulnerabilities detected - good job maintaining security!"]
+# Comprehensive evaluation result for auditing
+evaluation_result = {
+    "vulnerability_summary": vulnerability_summary,
+    "gate_decision": gate_decision,
+    "user": {
+        "key": input.user.key,
+        "role": input.user.attributes.role
+    },
+    "resource": {
+        "type": input.resource.type,
+        "safe_deployment": safe_deployment
+    },
+    "timestamp": time.now_ns(),
+    "policy_version": "2.0.0-safe-deployment-gate"
 }
+
+# Main allow decision (NOTE: Actual authorization handled by Permit.io cloud)
+# This policy serves as documentation and audit trail
+allow = true if {
+    # This Rego policy is informational only
+    # Real authorization decisions are made by Permit.io Resource Sets:
+    # - Safe Deployment Gate (criticalCount = 0) → Developer allowed
+    # - Base Deployment (criticalCount > 0) → Only editor/Security Officer allowed
+    true
+}
+
+# Return evaluation details for audit logging
+response = evaluation_result

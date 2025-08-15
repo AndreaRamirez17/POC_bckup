@@ -9,23 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       override_gates:
-        description: 'Override security gates (requires approval)'
+        description: 'Override Safe Deployment Gate (emergency deployment only)'
         required: false
         default: 'false'
         type: choice
         options:
           - 'false'
           - 'true'
-      user_role:
-        description: 'User role for testing (configure in Permit.io)'
-        required: false
-        default: 'ci-pipeline'
-        type: choice
-        options:
-          - 'ci-pipeline'
-          - 'developer'
-          - 'editor'
-          - 'security-admin'
 
 env:
   JAVA_VERSION: '17'
@@ -574,6 +564,58 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
           
+      - name: Determine User Role Based on GitHub Username
+        id: user_role
+        run: |
+          GITHUB_USER="${{ github.actor }}"
+          
+          echo "🔍 Determining Safe Deployment Gate access level for: $GITHUB_USER"
+          
+          # Map GitHub usernames to their Permit.io roles and access levels
+          case "$GITHUB_USER" in
+            "david-santander")
+              USER_ROLE="Security Officer"  # Full override capabilities in Permit.io
+              ACCESS_LEVEL="FULL_OVERRIDE"
+              echo "🛡️ Security Officer access: Full Safe Deployment Gate override capabilities"
+              echo "   ✅ Safe Deployment Gate: Access when criticalCount = 0"
+              echo "   🔓 Base Deployment: Override access for critical vulnerabilities"
+              ;;
+            "security-manager"|"security-team")
+              USER_ROLE="Security Officer"
+              ACCESS_LEVEL="FULL_OVERRIDE"
+              echo "🛡️ Security Officer access granted for security team member"
+              ;;
+            "release-manager"|"editor-user")
+              USER_ROLE="editor"  # Emergency override capabilities
+              ACCESS_LEVEL="EMERGENCY_OVERRIDE"
+              echo "✏️ Editor access: Emergency deployment override capabilities"
+              echo "   ✅ Safe Deployment Gate: Access when criticalCount = 0"
+              echo "   ⚠️ Emergency Override: Can deploy with critical vulnerabilities"
+              ;;
+            "github-actions"|"dependabot[bot]")
+              USER_ROLE="ci-pipeline"  # Automated systems
+              ACCESS_LEVEL="SAFE_ONLY"
+              echo "🤖 CI Pipeline access: Automated system restricted to safe deployments"
+              echo "   ✅ Safe Deployment Gate: Access ONLY when criticalCount = 0"
+              ;;
+            *)
+              # Default: Standard developers - most restrictive access
+              USER_ROLE="developer"
+              ACCESS_LEVEL="SAFE_ONLY"
+              echo "👨‍💻 Developer access: Standard user restricted to safe deployments"
+              echo "   ✅ Safe Deployment Gate: Access ONLY when criticalCount = 0"
+              echo "   ❌ Base Deployment: No access when critical vulnerabilities present"
+              ;;
+          esac
+          
+          echo "USER_ROLE=$USER_ROLE" >> $GITHUB_OUTPUT
+          echo "ACCESS_LEVEL=$ACCESS_LEVEL" >> $GITHUB_OUTPUT
+          echo ""
+          echo "🎯 Final Role Assignment:"
+          echo "   GitHub User: $GITHUB_USER"
+          echo "   Permit.io Role: $USER_ROLE"
+          echo "   Access Level: $ACCESS_LEVEL"
+          
       - name: Validate Permit.io configuration
         env:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
@@ -582,13 +624,13 @@ jobs:
           chmod +x permit-gating/scripts/validate-permit.sh
           ./permit-gating/scripts/validate-permit.sh
 
-      - name: Start Docker Compose services
+      - name: Start Safe Deployment Gate Services (PDP Only)
         env:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
           USER_KEY: ${{ github.actor }}
-          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
+          USER_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
         run: |
           # Create .env file only for Docker Compose (required by docker-compose.yml)
           cat > .env << EOF
@@ -599,8 +641,16 @@ jobs:
           USER_ROLE=${USER_ROLE}
           EOF
           
-          # Start Docker Compose services
-          docker compose up -d --build
+          # Start Safe Deployment Gate infrastructure (PDP only)
+          echo "🐳 Starting Safe Deployment Gate infrastructure..."
+          echo "   ✅ PDP (Policy Decision Point): Required for authorization decisions"
+          echo "   🚫 OPAL Server: Not needed - policies managed by Permit.io cloud"
+          echo "   🚫 OPAL Fetcher: Not needed - vulnerability data passed directly"
+          echo "   🚫 Redis: Not needed - no OPAL services required"
+          echo ""
+          
+          # Use optimized compose file (only starts required PDP service)
+          docker compose -f permit-gating/docker/docker-compose.gating.yml up -d
           
           # Wait for services to be ready with better health checks
           echo "Waiting for services to start..."
@@ -616,7 +666,7 @@ jobs:
               break
             elif [ $i -eq 10 ]; then
               echo "✗ PDP failed to become ready"
-              docker compose logs permit-pdp
+              docker compose -f permit-gating/docker/docker-compose.gating.yml logs permit-pdp
               exit 1
             else
               echo "Attempt $i/10: PDP not ready yet..."
@@ -668,18 +718,21 @@ jobs:
           echo "  GitHub Repository: ${{ github.repository }}"
           echo "  User Role Input: ${{ github.event.inputs.user_role }}"
           
-      - name: Evaluate Security Gates
+      - name: Evaluate Safe Deployment Gate
         id: gate_evaluation
         env:
           PDP_URL: ${{ env.PDP_URL }}
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
-          USER_KEY: ${{ github.actor }}  # Use GitHub username for Permit.io audit logs
-          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Use input role or default to editor for testing
+          USER_KEY: ${{ github.actor }}
+          USER_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+          ACCESS_LEVEL: ${{ steps.user_role.outputs.ACCESS_LEVEL }}
         run: |
-          echo "🔐 Evaluating security gates:"
-          echo "  Permit.io User Key: ${USER_KEY}"
-          echo "  Permit.io User Role: ${USER_ROLE}"
-          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "🚪 Safe Deployment Gate Evaluation (Inverted ABAC Logic):"
+          echo "  👤 GitHub User: ${USER_KEY}"
+          echo "  🎭 Permit.io Role: ${USER_ROLE}"
+          echo "  🔐 Access Level: ${ACCESS_LEVEL}"
+          echo "  🔄 Logic: Resource Set matches when criticalCount = 0"
+          echo "  📊 Architecture: PDP-only (no OPAL services needed)"
           echo "  Expected in audit logs: User=${USER_KEY}, Action=deploy"
           echo ""
           
@@ -687,8 +740,8 @@ jobs:
           SECURITY_GATE_RESULT=0
           QUALITY_GATE_RESULT=0
           
-          # Run security vulnerability gate evaluation
-          echo "Evaluating security vulnerability gates..."
+          # Run Safe Deployment Gate evaluation
+          echo "Evaluating Safe Deployment Gate with Resource Set matching..."
           chmod +x permit-gating/scripts/evaluate-gates.sh
           
           # Disable exit on error temporarily to capture exit code
@@ -696,6 +749,47 @@ jobs:
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
           SECURITY_GATE_RESULT=$?
           set -e
+          
+          # Extract critical vulnerability count for detailed explanation
+          CRITICAL_COUNT=0
+          if [ -f "snyk-scanning/results/snyk-results.json" ]; then
+            CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+          fi
+          
+          # Explain Safe Deployment Gate decision logic
+          echo ""
+          echo "🔍 Safe Deployment Gate Analysis:"
+          case $SECURITY_GATE_RESULT in
+            0)
+              case "$ACCESS_LEVEL" in
+                "SAFE_ONLY")
+                  echo "✅ Safe Deployment Gate: MATCHED (criticalCount = 0)"
+                  echo "   🟢 Result: Safe deployment authorized for $USER_ROLE"
+                  echo "   📋 Resource Set: 'Safe Deployment Gate' condition satisfied"
+                  ;;
+                "EMERGENCY_OVERRIDE"|"FULL_OVERRIDE")
+                  if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                    echo "🔓 Safe Deployment Gate: OVERRIDE ACTIVE"
+                    echo "   🟡 Result: Critical vulnerabilities ($CRITICAL_COUNT) overridden by $USER_ROLE"
+                    echo "   📋 Resource: Base deployment accessed with override permission"
+                  else
+                    echo "✅ Safe Deployment Gate: MATCHED (criticalCount = 0)"
+                    echo "   🟢 Result: Safe deployment authorized for $USER_ROLE"
+                    echo "   📋 Resource Set: 'Safe Deployment Gate' condition satisfied"
+                  fi
+                  ;;
+              esac
+              ;;
+            2)
+              echo "❌ Safe Deployment Gate: BLOCKED"
+              echo "   🔴 Critical vulnerabilities present: $CRITICAL_COUNT"
+              echo "   🚫 User role '$USER_ROLE' cannot access base deployment resource"
+              echo "   📋 Resource Set: 'Safe Deployment Gate' condition NOT met (criticalCount > 0)"
+              echo "   💡 Solutions:"
+              echo "      • Fix critical vulnerabilities to enable Safe Deployment Gate"
+              echo "      • Use editor or Security Officer role for emergency override"
+              ;;
+          esac
           
           # Check SonarQube quality gate if configured
           if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
@@ -858,10 +952,11 @@ jobs:
               ;;
           esac
           
-      - name: Stop Docker Compose services
+      - name: Stop Safe Deployment Gate Services
         if: always()
         run: |
-          docker compose down
+          echo "🔽 Stopping Safe Deployment Gate services..."
+          docker compose -f permit-gating/docker/docker-compose.gating.yml down
           
   build-docker-image:
     name: Build Docker Image

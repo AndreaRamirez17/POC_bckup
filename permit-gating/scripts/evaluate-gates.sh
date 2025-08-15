@@ -201,34 +201,65 @@ evaluate_response() {
     local decision="UNKNOWN"
     local violations
     
-    # Parse response with error handling
+    # Parse response with error handling - properly handle boolean values
     allow=$(echo "$response" | jq -r '.allow // false' 2>/dev/null || echo "false")
     
-    # The PDP doesn't return a 'decision' field, so we need to determine it based on the response
     # Check if there's a debug field with error codes
     local error_code=$(echo "$response" | jq -r '.debug.abac.code // .debug.rbac.code // ""' 2>/dev/null || echo "")
     
-    # Note: Removed editor override logic to show true PDP decisions for audit clarity
+    # Check if ABAC rules were involved
+    local has_abac=$(echo "$response" | jq -r 'if .debug.abac then "true" else "false" end' 2>/dev/null || echo "false")
+    local abac_resource_set=$(echo "$response" | jq -r '.debug.abac.resource_set // ""' 2>/dev/null || echo "")
     
-    # Determine decision based on allow field and vulnerability counts
-    if [ "$allow" = "true" ]; then
-        if [ "$HIGH_COUNT" -gt 0 ]; then
+    # Main decision logic based on Permit.io's 'allow' field
+    # NOTE: Using inverted ABAC logic with "Safe Deployment Gate"
+    # - Safe Deployment Gate matches when criticalCount = 0 (safe deployments)
+    # - Critical vulnerabilities fall back to base deployment resource (restricted access)
+    if [ "$allow" = "false" ]; then
+        # Request was denied
+        decision="FAIL"
+        if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+            echo "   🔒 ABAC Rule Blocking: Safe Deployment Gate not matched, access denied" >&2
+        else
+            echo "   ❌ Access Denied: Insufficient permissions on base deployment resource" >&2
+        fi
+    elif [ "$allow" = "true" ]; then
+        # Request was allowed - check context
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            # Critical vulnerabilities present but allowed (override scenario)
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                decision="PASS_OVERRIDE"
+                echo "   🔑 ABAC Override: User has permission on base deployment resource despite critical vulnerabilities" >&2
+            else
+                decision="PASS_OVERRIDE"
+                echo "   🔑 Role Override: Deployment allowed despite critical vulnerabilities" >&2
+            fi
+        elif [ "$HIGH_COUNT" -gt 0 ]; then
             decision="PASS_WITH_WARNINGS"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: No critical vulnerabilities, high severity warnings" >&2
+            else
+                echo "   ⚠️  High severity vulnerabilities present" >&2
+            fi
         elif [ "$MEDIUM_COUNT" -gt 0 ]; then
             decision="PASS_WITH_INFO"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: No critical vulnerabilities, medium severity info" >&2
+            else
+                echo "   ℹ️  Medium severity vulnerabilities present" >&2
+            fi
         else
             decision="PASS"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: Clean deployment, no vulnerabilities" >&2
+            else
+                echo "   ✅ Security gates passed" >&2
+            fi
         fi
     else
-        # Check if it's due to critical vulnerabilities
-        if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            decision="FAIL"
-        elif [ -n "$error_code" ]; then
-            # If there's an error code, it means the policy evaluation failed
-            decision="FAIL"
-        else
-            decision="UNKNOWN"
-        fi
+        # Unexpected response
+        decision="FAIL"
+        echo "   ❓ Unexpected response from PDP" >&2
     fi
     violations=$(echo "$response" | jq -r '.violations // []' 2>/dev/null || echo "[]")
     
@@ -301,12 +332,29 @@ evaluate_response() {
             print_color "$YELLOW" "💡 Medium severity vulnerabilities detected. Consider remediation in next maintenance window."
             return 1
             ;;
+        "PASS_OVERRIDE")
+            print_color "$YELLOW" "🔑 DECISION: PASS WITH OVERRIDE - Critical vulnerabilities overridden by role privileges"
+            echo ""
+            echo "⚠️  Override Context:"
+            echo "   • User: ${USER_KEY}"
+            echo "   • Role: ${USER_ROLE}" 
+            echo "   • Critical vulnerabilities present: $CRITICAL_COUNT"
+            echo "   • Permit.io RBAC allowed deployment despite policy denial"
+            echo ""
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                echo "🔴 Critical Vulnerabilities (Overridden):"
+                echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+                echo ""
+            fi
+            print_color "$YELLOW" "⚡ DEPLOYMENT AUTHORIZED BY ROLE OVERRIDE - Proceed with extreme caution and audit trail."
+            return 0
+            ;;
         "FAIL")
             print_color "$RED" "❌ DECISION: FAIL - Hard gate triggered"
             echo ""
             
             # Display reason from PDP debug information
-            local reason=$(echo "$response" | jq -r '.debug.abac.reason // .debug.rbac.reason // "Policy evaluation failed"' 2>/dev/null || echo "Policy evaluation failed")
+            local reason=$(echo "$response" | jq -r '.debug.abac.reason // .debug.rbac.reason // "Critical vulnerabilities detected"' 2>/dev/null || echo "Policy evaluation failed")
             echo "🚫 Blocking Issue: $reason"
             echo ""
             
