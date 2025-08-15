@@ -100,6 +100,21 @@ jobs:
           name: build-artifacts
           path: .
           
+      - name: Verify project structure
+        run: |
+          echo "📁 Verifying downloaded artifacts and project structure..."
+          echo "Current directory contents:"
+          ls -la
+          echo ""
+          echo "Checking microservice-moc-app directory:"
+          ls -la microservice-moc-app/ || echo "⚠️ microservice-moc-app directory not found"
+          echo ""
+          echo "Checking for pom.xml:"
+          ls -la microservice-moc-app/pom.xml || echo "⚠️ pom.xml not found"
+          echo ""
+          echo "Checking for JAR files:"
+          ls -la microservice-moc-app/target/*.jar || echo "⚠️ JAR files not found"
+          
       - name: Validate Snyk configuration
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -127,8 +142,20 @@ jobs:
           # Run Snyk test and capture results
           cd microservice-moc-app
           
+          # Verify we're in the right directory and files exist
+          echo "🔍 Current directory: $(pwd)"
+          echo "📄 Checking for pom.xml..."
+          ls -la pom.xml || echo "❌ pom.xml not found in $(pwd)"
+          
           # Run test and save results (allow failure to capture vulnerabilities)
-          snyk test --json > ../snyk-scanning/results/snyk-results.json || true
+          echo "🔍 Running Snyk scan..."
+          snyk test --json > ../snyk-scanning/results/snyk-results.json || echo "⚠️ Snyk test completed with exit code $?"
+          
+          # Verify results file was created
+          echo "📊 Checking Snyk results file..."
+          ls -la ../snyk-scanning/results/snyk-results.json || echo "❌ Snyk results file not created"
+          echo "📄 Results file size:"
+          wc -c ../snyk-scanning/results/snyk-results.json || echo "❌ Cannot check file size"
           
           # Parse results for summary
           echo "Snyk scan completed. Parsing results..."
