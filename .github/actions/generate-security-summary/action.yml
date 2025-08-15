@@ -1,0 +1,131 @@
+name: 'Generate Security Summary'
+description: 'Parses Snyk security scan results and generates GitHub step summary'
+inputs:
+  results-file:
+    description: 'Path to the Snyk results JSON file'
+    required: true
+  summary-title:
+    description: 'Title for the security summary section'
+    required: false
+    default: '🔒 Security Scan Results'
+
+outputs:
+  critical-count:
+    description: 'Number of critical vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.critical-count }}
+  high-count:
+    description: 'Number of high vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.high-count }}
+  medium-count:
+    description: 'Number of medium vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.medium-count }}
+  low-count:
+    description: 'Number of low vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.low-count }}
+  total-count:
+    description: 'Total number of vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.total-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install jq for JSON parsing
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y jq
+        
+    - name: Parse security results
+      id: parse-results
+      shell: bash
+      run: |
+        if [ ! -f "${{ inputs.results-file }}" ]; then
+          echo "⚠️ Results file not found: ${{ inputs.results-file }}"
+          echo "critical-count=0" >> $GITHUB_OUTPUT
+          echo "high-count=0" >> $GITHUB_OUTPUT
+          echo "medium-count=0" >> $GITHUB_OUTPUT
+          echo "low-count=0" >> $GITHUB_OUTPUT
+          echo "total-count=0" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "📄 Parsing security results from: ${{ inputs.results-file }}"
+        
+        # Extract vulnerability counts with better error handling
+        CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' ${{ inputs.results-file }} 2>/dev/null || echo "0")
+        HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' ${{ inputs.results-file }} 2>/dev/null || echo "0")
+        MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length // 0' ${{ inputs.results-file }} 2>/dev/null || echo "0")
+        LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length // 0' ${{ inputs.results-file }} 2>/dev/null || echo "0")
+        TOTAL_COUNT=$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))
+        
+        echo "critical-count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+        echo "high-count=$HIGH_COUNT" >> $GITHUB_OUTPUT
+        echo "medium-count=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+        echo "low-count=$LOW_COUNT" >> $GITHUB_OUTPUT
+        echo "total-count=$TOTAL_COUNT" >> $GITHUB_OUTPUT
+        
+        echo "📊 Vulnerability counts - Critical: $CRITICAL_COUNT, High: $HIGH_COUNT, Medium: $MEDIUM_COUNT, Low: $LOW_COUNT"
+        
+    - name: Generate security summary
+      shell: bash
+      run: |
+        CRITICAL_COUNT="${{ steps.parse-results.outputs.critical-count }}"
+        HIGH_COUNT="${{ steps.parse-results.outputs.high-count }}"
+        MEDIUM_COUNT="${{ steps.parse-results.outputs.medium-count }}"
+        LOW_COUNT="${{ steps.parse-results.outputs.low-count }}"
+        TOTAL_COUNT="${{ steps.parse-results.outputs.total-count }}"
+        
+        # Generate enhanced security summary
+        echo "## ${{ inputs.summary-title }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Vulnerability Overview" >> $GITHUB_STEP_SUMMARY
+        echo "| Severity | Count | Impact |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+        
+        # Critical vulnerabilities
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "| 🔴 **Critical** | **$CRITICAL_COUNT** | **❌ Deployment Blocked** |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🔴 Critical | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # High vulnerabilities
+        if [ "$HIGH_COUNT" -gt 0 ]; then
+          echo "| 🟠 **High** | **$HIGH_COUNT** | **⚠️ Review Required** |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🟠 High | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Medium vulnerabilities
+        if [ "$MEDIUM_COUNT" -gt 0 ]; then
+          echo "| 🟡 Medium | $MEDIUM_COUNT | ℹ️ Informational |" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "| 🟡 Medium | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Low vulnerabilities
+        echo "| ⚪ Low | $LOW_COUNT | ✅ OK |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Total** | **$TOTAL_COUNT** | - |" >> $GITHUB_STEP_SUMMARY
+        
+        # Add top vulnerable packages if any critical or high vulns exist
+        if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Priority Fixes Required" >> $GITHUB_STEP_SUMMARY
+          echo "<details>" >> $GITHUB_STEP_SUMMARY
+          echo "<summary>Click to view affected packages</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Extract top 5 critical/high vulnerabilities
+          if [ -f "${{ inputs.results-file }}" ]; then
+            jq -r '.vulnerabilities | map(select(.severity == "critical" or .severity == "high")) | .[0:5] | .[] | "- **\(.packageName)** (\(.version)) - \(.title) [\(.severity | ascii_upcase)]"' ${{ inputs.results-file }} >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Unable to extract vulnerability details" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Add scan metadata
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📝 Scan Details" >> $GITHUB_STEP_SUMMARY
+        echo "- **Project:** microservice-moc-app" >> $GITHUB_STEP_SUMMARY
+        echo "- **Type:** Dependencies (Maven)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

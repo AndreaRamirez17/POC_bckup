@@ -1,0 +1,991 @@
+name: CI/CD Security Gating Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      override_gates:
+        description: 'Override security gates (requires approval)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      user_role:
+        description: 'User role for testing (configure in Permit.io)'
+        required: false
+        default: 'ci-pipeline'
+        type: choice
+        options:
+          - 'ci-pipeline'
+          - 'developer'
+          - 'editor'
+          - 'security-admin'
+
+env:
+  JAVA_VERSION: '17'
+  MAVEN_VERSION: '3.8.6'
+  DOCKER_BUILDKIT: 1
+  PDP_URL: http://localhost:7766
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Cache Maven dependencies and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            microservice-moc-app/target
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ hashFiles('microservice-moc-app/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-
+            ${{ runner.os }}-maven-
+            
+      - name: Build Spring Boot application
+        run: |
+          cd microservice-moc-app
+          mvn clean compile test
+          
+      - name: Package application
+        run: |
+          cd microservice-moc-app
+          mvn package -DskipTests
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: microservice-moc-app
+          retention-days: 1
+          
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: .
+          
+      - name: Validate Snyk configuration
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x snyk-scanning/scripts/validate-snyk.sh
+          ./snyk-scanning/scripts/validate-snyk.sh
+
+      - name: Run Snyk security scan
+        id: snyk_scan
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          # Install Snyk CLI
+          npm install -g snyk
+          
+          # Authenticate with Snyk
+          snyk auth $SNYK_TOKEN
+          
+          # Ensure results directory exists
+          mkdir -p snyk-scanning/results
+          
+          # Run Snyk test and capture results
+          cd microservice-moc-app
+          
+          # Verify we're in the right directory and files exist
+          echo "🔍 Current directory: $(pwd)"
+          echo "📄 Checking for pom.xml..."
+          ls -la pom.xml || echo "❌ pom.xml not found in $(pwd)"
+          
+          # Run test and save results (allow failure to capture vulnerabilities)
+          echo "🔍 Running Snyk scan..."
+          snyk test --json > ../snyk-scanning/results/snyk-results.json || echo "⚠️ Snyk test completed with exit code $?"
+          
+          # Verify results file was created
+          echo "📊 Checking Snyk results file..."
+          ls -la ../snyk-scanning/results/snyk-results.json || echo "❌ Snyk results file not created"
+          echo "📄 Results file size:"
+          wc -c ../snyk-scanning/results/snyk-results.json || echo "❌ Cannot check file size"
+          
+          # Parse results for summary
+          echo "Snyk scan completed. Parsing results..."
+          
+          # Extract vulnerability counts with better error handling
+          CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          MEDIUM_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length // 0' ../snyk-scanning/results/snyk-results.json)
+          
+          echo "CRITICAL_COUNT=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "HIGH_COUNT=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "MEDIUM_COUNT=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          echo "LOW_COUNT=$LOW_COUNT" >> $GITHUB_OUTPUT
+          
+          # Display enhanced summary
+          echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Vulnerability Overview" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count | Impact |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Critical vulnerabilities
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "| 🔴 **Critical** | **$CRITICAL_COUNT** | **❌ Deployment Blocked** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔴 Critical | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # High vulnerabilities
+          if [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "| 🟠 **High** | **$HIGH_COUNT** | **⚠️ Review Required** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟠 High | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Medium vulnerabilities
+          if [ "$MEDIUM_COUNT" -gt 0 ]; then
+            echo "| 🟡 Medium | $MEDIUM_COUNT | ℹ️ Informational |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟡 Medium | 0 | ✅ None |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Low vulnerabilities
+          echo "| ⚪ Low | $LOW_COUNT | ✅ OK |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$((CRITICAL_COUNT + HIGH_COUNT + MEDIUM_COUNT + LOW_COUNT))** | - |" >> $GITHUB_STEP_SUMMARY
+          
+          # Add top vulnerable packages if any critical or high vulns exist
+          if [ "$CRITICAL_COUNT" -gt 0 ] || [ "$HIGH_COUNT" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🎯 Priority Fixes Required" >> $GITHUB_STEP_SUMMARY
+            echo "<details>" >> $GITHUB_STEP_SUMMARY
+            echo "<summary>Click to view affected packages</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Extract top 5 critical/high vulnerabilities
+            jq -r '.vulnerabilities | map(select(.severity == "critical" or .severity == "high")) | .[0:5] | .[] | "- **\(.packageName)** (\(.version)) - \(.title) [\(.severity | ascii_upcase)]"' ../snyk-scanning/results/snyk-results.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Unable to extract vulnerability details" >> $GITHUB_STEP_SUMMARY
+            
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Add scan metadata
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Scan Details" >> $GITHUB_STEP_SUMMARY
+          echo "- **Project:** microservice-moc-app" >> $GITHUB_STEP_SUMMARY
+          echo "- **Type:** Dependencies (Maven)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Send results to Snyk UI (Monitor)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          # Send results to Snyk dashboard with project name
+          echo "📤 Sending scan results to Snyk dashboard..."
+          snyk monitor --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Snyk Dashboard Integration" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Results Published:** Dependency scan sent to Snyk platform" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Link |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Dependencies | ✅ Monitored | [View in Snyk](https://app.snyk.io/org/${{ secrets.SNYK_ORG_ID }}/project/) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Project Name | cicd-pipeline-poc/microservice-moc-app-deps | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 Monitoring | Enabled | Auto-scan on changes |" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Run Snyk Code Analysis (SAST)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          echo "🔍 Running Snyk Code analysis for security issues in source code..."
+          
+          # Run Snyk Code test (SAST) - this doesn't affect our JSON file
+          snyk code test --json > ../snyk-scanning/results/snyk-code-results.json || true
+          
+          # Parse SAST results for summary
+          if [ -f "../snyk-scanning/results/snyk-code-results.json" ]; then
+            SAST_HIGH=$(jq '.runs[0].results | map(select(.level == "error")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            SAST_MEDIUM=$(jq '.runs[0].results | map(select(.level == "warning")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            SAST_LOW=$(jq '.runs[0].results | map(select(.level == "note")) | length // 0' ../snyk-scanning/results/snyk-code-results.json 2>/dev/null || echo "0")
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Static Application Security Testing (SAST)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Finding Level | Count | Description |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------------|-------|-------------|" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$SAST_HIGH" -gt 0 ]; then
+              echo "| 🔴 **High** | **$SAST_HIGH** | **Security issues in code** |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🔴 High | 0 | ✅ No critical code issues |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$SAST_MEDIUM" -gt 0 ]; then
+              echo "| 🟡 Medium | $SAST_MEDIUM | Code quality warnings |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| 🟡 Medium | 0 | ✅ No warnings |" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "| ⚪ Low | $SAST_LOW | Informational |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Analysis Type:** Snyk Code (Real-time SAST)" >> $GITHUB_STEP_SUMMARY
+            echo "**Languages:** Java, Spring Boot" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Build and scan Docker image
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Build Docker image once and tag for both scanning and deployment
+          cd microservice-moc-app
+          docker build -t gating-poc-app:${{ github.sha }} .
+          docker tag gating-poc-app:${{ github.sha }} cicd-poc-app:scan
+          
+          # Scan Docker image with Snyk
+          echo "🐳 Scanning Docker image for vulnerabilities..."
+          snyk container test cicd-poc-app:scan --json > ../snyk-scanning/results/snyk-container-results.json || true
+          
+          # Send container results to Snyk UI
+          snyk container monitor cicd-poc-app:scan --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
+          
+          # Parse container scan results for summary
+          if [ -f "../snyk-scanning/results/snyk-container-results.json" ]; then
+            CONTAINER_CRITICAL=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "0")
+            CONTAINER_HIGH=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "0")
+            BASE_IMAGE=$(jq -r '.docker.baseImage // "unknown"' ../snyk-scanning/results/snyk-container-results.json 2>/dev/null || echo "unknown")
+          else
+            CONTAINER_CRITICAL=0
+            CONTAINER_HIGH=0
+            BASE_IMAGE="openjdk:11-jre-slim"
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Container Security Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Layer | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Base Image | ℹ️ Scanned | $BASE_IMAGE |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CONTAINER_CRITICAL" -gt 0 ]; then
+            echo "| 🔴 Critical Vulns | **$CONTAINER_CRITICAL found** | **Action Required** |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🔴 Critical Vulns | 0 | ✅ Clean |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "$CONTAINER_HIGH" -gt 0 ]; then
+            echo "| 🟠 High Vulns | $CONTAINER_HIGH found | Review needed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 🟠 High Vulns | 0 | ✅ Clean |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "| 📊 Monitoring | ✅ Enabled | [View in Snyk](https://app.snyk.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Project:** cicd-pipeline-poc/microservice-moc-app-container" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** Docker Hub" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Save Docker image for reuse
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        run: |
+          # Save the built Docker image as tar file for reuse in build-docker-image job
+          docker save gating-poc-app:${{ github.sha }} > gating-poc-app-temp.tar
+          
+      - name: Upload Docker image artifact
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-temp
+          path: gating-poc-app-temp.tar
+          retention-days: 1
+          
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-results
+          path: |
+            snyk-scanning/results/snyk-results.json
+            snyk-scanning/results/snyk-code-results.json
+            snyk-scanning/results/snyk-container-results.json
+          if-no-files-found: warn
+          retention-days: 1
+          
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: .
+          
+      - name: Validate SonarQube configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x sonarqube-cloud-scanning/scripts/validate-sonarqube.sh
+          
+          # Run validation and capture exit code
+          ./sonarqube-cloud-scanning/scripts/validate-sonarqube.sh && echo "SONARQUBE_VALIDATED=true" >> $GITHUB_ENV || echo "SONARQUBE_VALIDATED=false" >> $GITHUB_ENV
+
+      - name: Run SonarQube Cloud Analysis
+        id: sonarqube_scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ] || [ "$SONARQUBE_VALIDATED" = "false" ]; then
+            echo "⚠️ SonarQube Cloud not configured or validation failed - skipping code quality analysis"
+            echo "SONARQUBE_CONFIGURED=false" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ Code Quality Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "SonarQube Cloud is not configured. Set SONAR_TOKEN secret to enable." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🔍 Running SonarQube Cloud analysis..."
+            echo "SONARQUBE_CONFIGURED=true" >> $GITHUB_OUTPUT
+            
+            # Verify Java version for SonarQube
+            echo "🔍 Verifying Java setup for SonarQube analysis..."
+            echo "JAVA_HOME: $JAVA_HOME"
+            java -version
+            mvn -version
+            
+            cd microservice-moc-app
+            
+            # Verify compiled classes exist
+            echo "🔍 Verifying compiled classes for SonarQube analysis..."
+            ls -la target/classes/ || echo "⚠️ No compiled classes found, will compile first"
+            
+            # Ensure classes are compiled for SonarQube analysis
+            if [ ! -d "target/classes" ]; then
+              echo "📦 Compiling classes for SonarQube analysis..."
+              mvn compile
+            fi
+            
+            # Run SonarQube analysis with quality gate wait
+            mvn sonar:sonar \
+              -Dsonar.host.url=https://sonarcloud.io \
+              -Dsonar.token=$SONAR_TOKEN \
+              -Dsonar.organization=${SONAR_ORGANIZATION:-your-organization-key} \
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY:-cicd-pipeline-poc} \
+              -Dsonar.projectName="CI/CD Pipeline Security POC" \
+              -Dsonar.projectVersion=1.0.0 \
+              -Dsonar.java.binaries=target/classes \
+              -Dsonar.qualitygate.wait=true \
+              -Dsonar.qualitygate.timeout=300 || SONAR_EXIT_CODE=$?
+            
+            cd ..
+            
+            # Capture quality gate status with better error handling
+            if [ "${SONAR_EXIT_CODE:-0}" -eq 0 ]; then
+              echo "QUALITY_GATE_STATUS=PASSED" >> $GITHUB_OUTPUT
+              QG_STATUS="✅ PASSED"
+              QG_COLOR="green"
+              echo "✅ SonarQube analysis completed successfully"
+            else
+              echo "QUALITY_GATE_STATUS=FAILED" >> $GITHUB_OUTPUT
+              QG_STATUS="❌ FAILED"
+              QG_COLOR="red"
+              echo "❌ SonarQube analysis completed with quality gate failure (exit code: ${SONAR_EXIT_CODE})"
+              
+              # Don't fail the step here - let the gate evaluation handle it
+              echo "⚠️ Quality gate will be evaluated in the security-gates job"
+            fi
+            
+            # Generate summary
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Code Quality Analysis (SonarQube Cloud)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Quality Gate | **$QG_STATUS** |" >> $GITHUB_STEP_SUMMARY
+            echo "| Project | ${SONAR_PROJECT_KEY:-cicd-pipeline-poc} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+            
+            # Create branch-specific dashboard URL
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${SONAR_PROJECT_KEY:-cicd-pipeline-poc}"
+            else
+              DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${SONAR_PROJECT_KEY:-cicd-pipeline-poc}&branch=${{ github.ref_name }}"
+            fi
+            
+            echo "| Dashboard | [View Analysis Results]($DASHBOARD_URL) |" >> $GITHUB_STEP_SUMMARY
+            
+            # Run quality gate analysis and capture exit code
+            chmod +x sonarqube-cloud-scanning/scripts/analyze-quality-gates.sh
+            
+            echo "🔍 Running detailed quality gate analysis..."
+            
+            # Disable exit on error temporarily to capture exit code
+            set +e
+            ./sonarqube-cloud-scanning/scripts/analyze-quality-gates.sh \
+              -k "${SONAR_PROJECT_KEY:-cicd-pipeline-poc}" \
+              -o sonarqube-cloud-scanning/results/quality-gate-result.json
+            SONAR_GATE_EXIT_CODE=$?
+            set -e
+            
+            # Handle different exit codes from the analysis script
+            case "$SONAR_GATE_EXIT_CODE" in
+              0)
+                echo "✅ Quality gate analysis completed successfully"
+                ;;
+              1)
+                echo "⚠️ Quality gate analysis completed with warnings"
+                ;;
+              2)
+                echo "❌ Quality gate analysis failed - check quality standards"
+                ;;
+              *)
+                echo "❓ Quality gate analysis returned unexpected exit code: $SONAR_GATE_EXIT_CODE"
+                ;;
+            esac
+            
+            # Store the exit code for later evaluation
+            echo "SONAR_GATE_EXIT_CODE=$SONAR_GATE_EXIT_CODE" >> $GITHUB_OUTPUT
+            
+            # Parse and display metrics if available
+            if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
+              BUGS=$(jq -r '.metrics.bugs // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              VULNS=$(jq -r '.metrics.vulnerabilities // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              HOTSPOTS=$(jq -r '.metrics.security_hotspots // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              CODE_SMELLS=$(jq -r '.metrics.code_smells // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              COVERAGE=$(jq -r '.metrics.coverage // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              DUPLICATED_LINES=$(jq -r '.metrics.duplicated_lines_density // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              
+              # Extract ratings
+              SECURITY_RATING=$(jq -r '.metrics.ratings.security // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              RELIABILITY_RATING=$(jq -r '.metrics.ratings.reliability // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              MAINTAINABILITY_RATING=$(jq -r '.metrics.ratings.maintainability // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Detailed Quality Metrics:**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Metric | Value | Rating |" >> $GITHUB_STEP_SUMMARY
+              echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+              echo "| 🐛 Bugs | $BUGS | 🏆 **${RELIABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 🔒 Vulnerabilities | $VULNS | 🛡️ **${SECURITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 🔥 Security Hotspots | $HOTSPOTS | - |" >> $GITHUB_STEP_SUMMARY
+              echo "| 💨 Code Smells | $CODE_SMELLS | 🧹 **${MAINTAINABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 📊 Test Coverage | ${COVERAGE}% | - |" >> $GITHUB_STEP_SUMMARY
+              echo "| 📋 Code Duplication | ${DUPLICATED_LINES}% | - |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+      - name: Upload quality results
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-results
+          path: |
+            sonarqube-cloud-scanning/results/quality-gate-result.json
+          if-no-files-found: warn
+          retention-days: 1
+          
+  security-gates:
+    name: Security Gate Evaluation
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download security results
+        uses: actions/download-artifact@v4
+        with:
+          name: security-results
+          path: .
+          
+      - name: Download quality results
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-results
+          path: .
+        continue-on-error: true
+          
+      - name: Recreate expected directory structure
+        run: |
+          # Recreate the expected directory structure for downloaded artifacts
+          echo "📁 Recreating directory structure for security results..."
+          mkdir -p snyk-scanning/results
+          
+          # Move Snyk results files to expected locations (if they exist)
+          mv snyk-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-results.json not found"
+          mv snyk-code-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-code-results.json not found"  
+          mv snyk-container-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-container-results.json not found"
+          
+          # Verify file locations
+          echo "📊 Verifying Snyk results file locations:"
+          ls -la snyk-scanning/results/ || echo "⚠️ snyk-scanning/results directory not found"
+          
+      - name: Install jq for JSON parsing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          
+      - name: Validate Permit.io configuration
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x permit-gating/scripts/validate-permit.sh
+          ./permit-gating/scripts/validate-permit.sh
+
+      - name: Start Docker Compose services
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+          USER_KEY: ${{ github.actor }}
+          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
+        run: |
+          # Create .env file only for Docker Compose (required by docker-compose.yml)
+          cat > .env << EOF
+          PERMIT_API_KEY=$PERMIT_API_KEY
+          SNYK_TOKEN=$SNYK_TOKEN
+          SNYK_ORG_ID=$SNYK_ORG_ID
+          USER_KEY=${USER_KEY}
+          USER_ROLE=${USER_ROLE}
+          EOF
+          
+          # Start Docker Compose services
+          docker compose up -d --build
+          
+          # Wait for services to be ready with better health checks
+          echo "Waiting for services to start..."
+          sleep 30  # Increased from 15 to 30 seconds for better sync
+          
+          # Check service health using multiple endpoints like the working scripts
+          echo "Checking service health..."
+          
+          # Check PDP health on correct port
+          for i in {1..10}; do
+            if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
+              echo "✓ PDP health endpoint is responding"
+              break
+            elif [ $i -eq 10 ]; then
+              echo "✗ PDP failed to become ready"
+              docker compose logs permit-pdp
+              exit 1
+            else
+              echo "Attempt $i/10: PDP not ready yet..."
+              sleep 3
+            fi
+          done
+          
+          # Verify PDP is fully synced with Permit.io cloud
+          echo "Verifying PDP sync with Permit.io cloud..."
+          for i in {1..20}; do
+            response=$(curl -s -X POST http://localhost:7766/allowed \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $PERMIT_API_KEY" \
+              -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}' 2>/dev/null || echo "{}")
+            
+            if echo "$response" | grep -q '"synced":true'; then
+              echo "✓ PDP is fully synced with Permit.io cloud"
+              echo "  User david-santander is synchronized"
+              break
+            elif [ $i -eq 20 ]; then
+              echo "⚠️ PDP sync verification timeout - proceeding anyway"
+              echo "  This may affect audit logging"
+            else
+              echo "  Waiting for PDP to sync with cloud... ($i/20)"
+              sleep 3
+            fi
+          done
+          
+          # Test network connectivity to Permit.io cloud
+          echo "Testing connectivity to Permit.io cloud..."
+          if curl -sf -o /dev/null -w "%{http_code}" https://api.permit.io/v2/projects \
+             -H "Authorization: Bearer $PERMIT_API_KEY" | grep -q "200"; then
+            echo "✓ Successfully connected to Permit.io cloud API"
+          else
+            echo "⚠️ Could not verify connection to Permit.io cloud"
+            echo "  This may affect audit logging"
+          fi
+          
+          # Check PDP container logs for any connection issues
+          echo "Checking PDP container status..."
+          docker compose exec -T permit-pdp wget -q -O - http://localhost:7001/healthy || echo "PDP health check status: $?"
+          
+      - name: Debug User Context
+        run: |
+          echo "🔍 GitHub Context Debug:"
+          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "  GitHub Event Actor: ${{ github.event.actor.login }}"
+          echo "  GitHub Repository Owner: ${{ github.repository_owner }}"
+          echo "  GitHub Repository: ${{ github.repository }}"
+          echo "  User Role Input: ${{ github.event.inputs.user_role }}"
+          
+      - name: Evaluate Security Gates
+        id: gate_evaluation
+        env:
+          PDP_URL: ${{ env.PDP_URL }}
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          USER_KEY: ${{ github.actor }}  # Use GitHub username for Permit.io audit logs
+          USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}  # Use input role or default to editor for testing
+        run: |
+          echo "🔐 Evaluating security gates:"
+          echo "  Permit.io User Key: ${USER_KEY}"
+          echo "  Permit.io User Role: ${USER_ROLE}"
+          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "  Expected in audit logs: User=${USER_KEY}, Action=deploy"
+          echo ""
+          
+          # Initialize gate results
+          SECURITY_GATE_RESULT=0
+          QUALITY_GATE_RESULT=0
+          
+          # Run security vulnerability gate evaluation
+          echo "Evaluating security vulnerability gates..."
+          chmod +x permit-gating/scripts/evaluate-gates.sh
+          
+          # Disable exit on error temporarily to capture exit code
+          set +e
+          ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
+          SECURITY_GATE_RESULT=$?
+          set -e
+          
+          # Check SonarQube quality gate if configured
+          if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
+            echo ""
+            echo "Evaluating code quality gates..."
+            
+            # Get the actual gate decision and reason from the analysis
+            QG_DECISION=$(jq -r '.quality_gate.decision // "UNKNOWN"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_REASON=$(jq -r '.quality_gate.reason // "No reason provided"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_EXIT_CODE=$(jq -r '.gate_result.exit_code // 0' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            
+            # Use the exit code from the analysis script for consistent logic
+            case "$QG_EXIT_CODE" in
+              0)
+                echo "✅ Code quality gate: PASSED - $QG_REASON"
+                QUALITY_GATE_RESULT=0
+                ;;
+              1)
+                echo "⚠️ Code quality gate: WARNING - $QG_REASON"
+                QUALITY_GATE_RESULT=1
+                ;;
+              2)
+                echo "❌ Code quality gate: FAILED - $QG_REASON"
+                QUALITY_GATE_RESULT=2
+                ;;
+              *)
+                echo "❓ Code quality gate: UNKNOWN - $QG_REASON"
+                QUALITY_GATE_RESULT=0  # Don't block on unknown
+                ;;
+            esac
+            
+            # Store detailed quality info for enhanced reporting
+            echo "SONAR_QG_DECISION=$QG_DECISION" >> $GITHUB_OUTPUT
+            echo "SONAR_QG_REASON=$QG_REASON" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ SonarQube quality gate not evaluated (not configured or results not available)"
+            QUALITY_GATE_RESULT=0
+          fi
+          
+          # Combine gate results (take the worst result)
+          if [ $SECURITY_GATE_RESULT -eq 2 ] || [ $QUALITY_GATE_RESULT -eq 2 ]; then
+            GATE_RESULT=2  # FAIL
+            echo ""
+            echo "🚫 Combined gate decision: BLOCKED"
+          elif [ $SECURITY_GATE_RESULT -eq 1 ] || [ $QUALITY_GATE_RESULT -eq 1 ]; then
+            GATE_RESULT=1  # WARNING
+            echo ""
+            echo "⚠️ Combined gate decision: WARNING"
+          else
+            GATE_RESULT=0  # PASS
+            echo ""
+            echo "✅ Combined gate decision: PASSED"
+          fi
+          
+          echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "SECURITY_GATE_RESULT=$SECURITY_GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "QUALITY_GATE_RESULT=$QUALITY_GATE_RESULT" >> $GITHUB_OUTPUT
+          
+          # Re-enable exit on error
+          set -e
+          
+          # Wait for audit logs to be sent to Permit.io cloud
+          echo "Waiting for audit logs to be sent to Permit.io..."
+          sleep 10
+          
+          # Check PDP logs for audit log confirmation
+          echo "Checking PDP logs for audit activity..."
+          docker compose logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found in recent logs"
+          
+          # Parse vulnerability details for enhanced summary
+          VULN_DETAILS=""
+          if [ -f "snyk-scanning/results/snyk-results.json" ]; then
+            # Get critical vulnerability count and details
+            CRIT_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '.vulnerabilities | map(select(.severity == "high")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            MED_COUNT=$(jq '.vulnerabilities | map(select(.severity == "medium")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            LOW_COUNT=$(jq '.vulnerabilities | map(select(.severity == "low")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+            TOTAL_VULNS=$((CRIT_COUNT + HIGH_COUNT + MED_COUNT + LOW_COUNT))
+          fi
+          
+          # Enhanced summary header
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚪 Security Gate Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add gate context
+          echo "### 🔐 Authorization Context" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 User | ${USER_KEY} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎭 Role | ${USER_ROLE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Policy Engine | Permit.io PDP |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔗 Audit Trail | [View in Permit.io](https://app.permit.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Set job status based on gate result with enhanced messaging
+          case $GATE_RESULT in
+            0)
+              echo "### ✅ Gate Decision: **PASSED**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🎉 **Result:** All security requirements met. Deployment authorized." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ✅ Pass | None found |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ✅ Pass | All gates cleared |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | ✅ Granted | Ready to deploy |" >> $GITHUB_STEP_SUMMARY
+              exit 0
+              ;;
+            1)
+              echo "### ⚠️ Gate Decision: **WARNING**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📋 **Result:** Non-blocking issues detected. Proceeding with caution." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ✅ Pass | None found |" >> $GITHUB_STEP_SUMMARY
+              echo "| High Vulnerabilities | ⚠️ Warning | ${HIGH_COUNT:-0} found (non-blocking) |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ⚠️ Soft Gate | Review recommended |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | ✅ Granted | Proceed with review |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**📝 Recommendation:** Review and plan remediation for high-severity vulnerabilities in next sprint." >> $GITHUB_STEP_SUMMARY
+              exit 0  # Treat soft gate warnings as success to continue pipeline
+              ;;
+            2)
+              echo "### ❌ Gate Decision: **BLOCKED**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "🛑 **Result:** Security requirements not met. Deployment blocked by policy." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Check | Status | Details |" >> $GITHUB_STEP_SUMMARY
+              echo "|-------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Critical Vulnerabilities | ❌ Fail | **${CRIT_COUNT:-0} found** |" >> $GITHUB_STEP_SUMMARY
+              echo "| Policy Compliance | ❌ Hard Gate | Blocking threshold exceeded |" >> $GITHUB_STEP_SUMMARY
+              echo "| Deployment Authorization | 🚫 Denied | Fix required before deployment |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              
+              # Add remediation steps
+              echo "### 🔧 Required Actions" >> $GITHUB_STEP_SUMMARY
+              echo "1. **Fix critical vulnerabilities** - Update affected dependencies" >> $GITHUB_STEP_SUMMARY
+              echo "2. **Run security scan locally** - Use \`snyk test\` to verify fixes" >> $GITHUB_STEP_SUMMARY
+              echo "3. **Re-run pipeline** - Push fixes and trigger new build" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              
+              if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+                echo "**🔒 Override Option:** Available for users with \`security-admin\` role via workflow dispatch." >> $GITHUB_STEP_SUMMARY
+                exit 2
+              else
+                echo "⚠️ **OVERRIDE ACTIVATED** - Gates bypassed by authorized user" >> $GITHUB_STEP_SUMMARY
+                echo "**Override User:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+                echo "**Override Time:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+                exit 0  # Override allows pipeline to continue
+              fi
+              ;;
+            *)
+              echo "### ❓ Gate Decision: **ERROR**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Unexpected gate evaluation result (exit code: $GATE_RESULT)" >> $GITHUB_STEP_SUMMARY
+              echo "Please check the logs for more details." >> $GITHUB_STEP_SUMMARY
+              exit 2
+              ;;
+          esac
+          
+      - name: Stop Docker Compose services
+        if: always()
+        run: |
+          docker compose down
+          
+  build-docker-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: security-gates
+    if: success() || (github.event.inputs.override_gates == 'true')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Download pre-built Docker image
+        id: download_image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-temp
+        continue-on-error: true
+        
+      - name: Load or build Docker image
+        run: |
+          if [ -f "gating-poc-app-temp.tar" ]; then
+            echo "📦 Loading pre-built Docker image..."
+            docker load < gating-poc-app-temp.tar
+            echo "✅ Reused Docker image from build-and-scan job"
+          else
+            echo "🔨 Building Docker image (fallback)..."
+            cd microservice-moc-app
+            docker build -t gating-poc-app:${{ github.sha }} .
+            echo "⚠️ Built new Docker image (artifact not found)"
+          fi
+          
+      - name: Save Docker image for deployment
+        run: |
+          docker save gating-poc-app:${{ github.sha }} > gating-poc-app.tar
+          
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: gating-poc-app.tar
+          
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: build-docker-image
+    if: github.ref == 'refs/heads/main' && (success() || github.event.inputs.override_gates == 'true')
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: |
+          docker load < gating-poc-app.tar
+          
+      - name: Deploy to environment
+        run: |
+          echo "🚀 Deploying application version ${{ github.sha }}"
+          
+          # Capture deployment start time
+          DEPLOY_START=$(date +%s)
+          
+          # Add actual deployment steps here
+          # For PoC, we'll just run the container locally
+          docker run -d -p 8080:8080 --name gating-poc-app gating-poc-app:${{ github.sha }}
+          
+          # Wait for application to start
+          sleep 10
+          
+          # Health check
+          HEALTH_STATUS="Unknown"
+          if curl -f http://localhost:8080/actuator/health 2>/dev/null; then
+            HEALTH_STATUS="Healthy"
+            HEALTH_ICON="✅"
+          else
+            HEALTH_STATUS="Unhealthy"
+            HEALTH_ICON="❌"
+            exit 1
+          fi
+          
+          # Calculate deployment time
+          DEPLOY_END=$(date +%s)
+          DEPLOY_TIME=$((DEPLOY_END - DEPLOY_START))
+          
+          # Enhanced deployment summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Status | **✅ SUCCESS** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Version | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Environment | Production |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏱️ Deploy Time | ${DEPLOY_TIME}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💚 Health Check | ${HEALTH_ICON} ${HEALTH_STATUS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 Deployed By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Application Details" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Container | gating-poc-app:${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌐 Port | 8080 |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📡 Health Endpoint | /actuator/health |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Build | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Security Gate Summary" >> $GITHUB_STEP_SUMMARY
+          echo "All security gates were passed before this deployment." >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.override_gates }}" = "true" ]; then
+            echo "⚠️ **Note:** Security gates were overridden for this deployment." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop gating-poc-app || true
+          docker rm gating-poc-app || true
