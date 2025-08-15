@@ -15,6 +15,8 @@ This PoC demonstrates an end-to-end security and quality gating solution that:
 
 ## Architecture
 
+### High-Level Architecture
+
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
 │  GitHub Actions │────▶│ Snyk Scanner │────▶│ Vulnerability   │
@@ -47,6 +49,42 @@ This PoC demonstrates an end-to-end security and quality gating solution that:
 │  - Override     │
 └─────────────────┘
 ```
+
+### GitHub Actions Workflow Architecture
+
+The CI/CD pipeline is available in two architectures:
+
+#### **Modular Architecture** (Recommended - Production Ready)
+```
+gating-pipeline-modular.yml (~270 lines)
+    ├── build-application.yml (reusable workflow)
+    ├── security-scanning.yml (reusable workflow)
+    ├── quality-analysis.yml (reusable workflow)
+    ├── docker-build.yml (reusable workflow)
+    └── security-gates (inline job)
+            └── deploy (inline job)
+
+Composite Actions:
+    ├── setup-java-maven (environment setup)
+    ├── download-build-artifacts (artifact management)
+    ├── generate-security-summary (Snyk reporting)
+    └── generate-quality-summary (SonarQube reporting)
+```
+
+**Benefits:**
+- 73% reduction in main workflow size
+- Highly reusable components
+- Easier maintenance and testing
+- Clear separation of concerns
+- Better parallelization
+
+#### **Monolithic Architecture** (Reference Only)
+```
+gating-pipeline-monolithic.yml (991 lines)
+    └── All jobs and steps in single file
+```
+
+For detailed workflow documentation, see [.github/workflows/README.md](.github/workflows/README.md)
 
 ## Components
 
@@ -102,12 +140,19 @@ This PoC demonstrates an end-to-end security and quality gating solution that:
 - **analyze-quality-gates.sh**: Quality gate analysis and metrics extraction
 - **test-sonarqube-local.sh**: Local SonarQube testing utility
 
-### 7. GitHub Actions Workflow
+### 7. GitHub Actions Workflows
 
+#### Available Workflows:
+- **`gating-pipeline-modular.yml`** - Production-ready modular pipeline using reusable workflows
+- **`gating-pipeline-monolithic.yml`** - Original single-file implementation (reference only)
+- **`ci-pipeline.yml`** - Simple CI demo workflow
+
+#### Key Features:
 - Builds and scans the application with both Snyk and SonarQube
 - Evaluates combined security and quality gates with role-based access
 - Makes deployment decisions based on both gate results and user permissions
 - Displays comprehensive metrics including A/A/A quality ratings
+- Supports reusable workflows and composite actions for maintainability
 
 ## Prerequisites
 
@@ -579,8 +624,19 @@ curl -sf https://api.permit.io/v2/projects -H "Authorization: Bearer $PERMIT_API
 ```
 cicd-pipeline-poc/
 ├── .github/
-│   └── workflows/
-│       └── gating-pipeline.yml      # Enhanced workflow with SonarQube
+│   ├── workflows/
+│   │   ├── gating-pipeline-modular.yml     # Modular pipeline (production)
+│   │   ├── gating-pipeline-monolithic.yml  # Original pipeline (reference)
+│   │   ├── build-application.yml           # Reusable build workflow
+│   │   ├── security-scanning.yml           # Reusable security workflow
+│   │   ├── quality-analysis.yml            # Reusable quality workflow
+│   │   ├── docker-build.yml                # Reusable Docker workflow
+│   │   └── ci-pipeline.yml                 # Simple CI demo
+│   └── actions/
+│       ├── setup-java-maven/               # Composite action for Java setup
+│       ├── download-build-artifacts/       # Composite action for artifacts
+│       ├── generate-security-summary/      # Composite action for Snyk reports
+│       └── generate-quality-summary/       # Composite action for SonarQube
 ├── permit-gating/                   # Security gating components
 │   ├── docs/                       # Gating documentation
 │   │   ├── README.md               # Gating setup guide
