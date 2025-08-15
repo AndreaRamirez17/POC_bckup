@@ -72,11 +72,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-artifacts
-          path: |
-            microservice-moc-app/target/*.jar
-            microservice-moc-app/target/surefire-reports/
-            microservice-moc-app/pom.xml
-            microservice-moc-app/src/
+          path: microservice-moc-app
           retention-days: 1
           
   security-scan:
@@ -99,21 +95,6 @@ jobs:
         with:
           name: build-artifacts
           path: .
-          
-      - name: Verify project structure
-        run: |
-          echo "📁 Verifying downloaded artifacts and project structure..."
-          echo "Current directory contents:"
-          ls -la
-          echo ""
-          echo "Checking microservice-moc-app directory:"
-          ls -la microservice-moc-app/ || echo "⚠️ microservice-moc-app directory not found"
-          echo ""
-          echo "Checking for pom.xml:"
-          ls -la microservice-moc-app/pom.xml || echo "⚠️ pom.xml not found"
-          echo ""
-          echo "Checking for JAR files:"
-          ls -la microservice-moc-app/target/*.jar || echo "⚠️ JAR files not found"
           
       - name: Validate Snyk configuration
         env:
