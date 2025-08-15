@@ -20,6 +20,7 @@ permit-gating/
 ├── scripts/                        # Gate evaluation scripts
 │   ├── evaluate-gates.sh          # Main gate evaluation script with Safe Deployment Gate logic
 │   ├── validate-permit.sh         # Permit.io configuration validation
+│   ├── verify-cloud-config.sh     # Verify Permit.io cloud configuration alignment
 │   ├── test-gates-local.sh        # Local testing utility with role-based tests
 │   └── test-payload.sh            # Test payload generator for different scenarios
 ├── policies/                       # Policy definitions
@@ -56,6 +57,9 @@ docker compose -f docker-compose.gating.yml up -d
 ```bash
 # Validate Permit.io setup and Safe Deployment Gate
 ./permit-gating/scripts/validate-permit.sh
+
+# Verify cloud configuration alignment (recommended after UI changes)
+./permit-gating/scripts/verify-cloud-config.sh
 
 # Test gate evaluation
 ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
@@ -242,6 +246,7 @@ docker compose -f permit-gating/docker/docker-compose.gating.yml restart
 
 ### Support Resources
 - **Business Requirements**: [`PERMIT_IO_GATING_BRD.md`](PERMIT_IO_GATING_BRD.md)
+- **Configuration Fix Guide**: [`PERMIT_IO_CONFIGURATION_FIX.md`](PERMIT_IO_CONFIGURATION_FIX.md) - **RESOLVED ✅**
 - **Permit.io Documentation**: [docs.permit.io](https://docs.permit.io)
 - **Main Project Guide**: [`../../README.md`](../../README.md)
 - **Policy Configuration**: [`../policies/permit_config.json`](../policies/permit_config.json)
