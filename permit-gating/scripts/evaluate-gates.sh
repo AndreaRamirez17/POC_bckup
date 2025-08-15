@@ -400,7 +400,9 @@ validate_role_alignment() {
     fi
     
     # Extract actual role from PDP response using multiple possible paths
-    if echo "$response_json" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+    if echo "$response_json" | jq -e '.debug.request.user.attributes.roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.request.user.attributes.roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
         actual_role=$(echo "$response_json" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
     elif echo "$response_json" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
         actual_role=$(echo "$response_json" | jq -r '.debug.user_roles[0] // "unknown"')

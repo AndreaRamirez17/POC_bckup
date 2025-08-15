@@ -248,7 +248,9 @@ jobs:
           echo "$AUTH_RESPONSE" | jq '.' 2>/dev/null || echo "Invalid JSON response: $AUTH_RESPONSE"
           
           # Try to extract actual role information from debug section
-          if echo "$AUTH_RESPONSE" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+          if echo "$AUTH_RESPONSE" | jq -e '.debug.request.user.attributes.roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.request.user.attributes.roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
             ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
           elif echo "$AUTH_RESPONSE" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
             ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user_roles[0] // "unknown"')
