@@ -1,5 +1,5 @@
 # Multi-stage build for Spring Boot application
-FROM maven:3.8.6-openjdk-11-slim AS builder
+FROM maven:3.8.6-openjdk-17-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -15,7 +15,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:11-jre-slim
+FROM openjdk:17-jre-slim
 
 # Create app user for security
 RUN groupadd -r appuser && useradd -r -g appuser appuser
