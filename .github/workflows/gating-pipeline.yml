@@ -33,8 +33,8 @@ env:
   PDP_URL: http://localhost:7766
 
 jobs:
-  build-and-scan:
-    name: Build and Security Scan
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
     
     steps:
@@ -62,6 +62,43 @@ jobs:
         run: |
           cd microservice-moc-app
           mvn clean compile test
+          
+      - name: Package application
+        run: |
+          cd microservice-moc-app
+          mvn package -DskipTests
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            microservice-moc-app/target/*.jar
+            microservice-moc-app/target/surefire-reports/
+            microservice-moc-app/pom.xml
+            microservice-moc-app/src/
+          retention-days: 1
+          
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: .
           
       - name: Validate Snyk configuration
         env:
@@ -288,6 +325,38 @@ jobs:
           path: gating-poc-app-temp.tar
           retention-days: 1
           
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-results
+          path: |
+            snyk-scanning/results/snyk-results.json
+            snyk-scanning/results/snyk-code-results.json
+            snyk-scanning/results/snyk-container-results.json
+          if-no-files-found: warn
+          retention-days: 1
+          
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: .
+          
       - name: Validate SonarQube configuration
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -434,31 +503,36 @@ jobs:
             fi
           fi
           
-      - name: Upload security and quality results
+      - name: Upload quality results
         uses: actions/upload-artifact@v4
         with:
-          name: security-quality-results
+          name: quality-results
           path: |
-            snyk-scanning/results/snyk-results.json
-            snyk-scanning/results/snyk-code-results.json
-            snyk-scanning/results/snyk-container-results.json
             sonarqube-cloud-scanning/results/quality-gate-result.json
           if-no-files-found: warn
+          retention-days: 1
           
   security-gates:
     name: Security Gate Evaluation
     runs-on: ubuntu-latest
-    needs: build-and-scan
+    needs: [security-scan, code-quality]
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Download security and quality results
+      - name: Download security results
         uses: actions/download-artifact@v4
         with:
-          name: security-quality-results
+          name: security-results
           path: .
+          
+      - name: Download quality results
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-results
+          path: .
+        continue-on-error: true
           
       - name: Install jq for JSON parsing
         run: |
