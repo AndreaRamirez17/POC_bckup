@@ -8,8 +8,6 @@ on:
         type: string
         default: '17'
     secrets:
-      GITHUB_TOKEN:
-        required: true
       SONAR_TOKEN:
         required: true
       SONAR_ORGANIZATION:
