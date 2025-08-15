@@ -43,6 +43,7 @@ fi
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Function to print colored output
@@ -382,6 +383,66 @@ evaluate_response() {
     esac
 }
 
+# Function to validate role alignment between intended and actual roles
+validate_role_alignment() {
+    local intended_role="${USER_ROLE:-unknown}"
+    local response_json="$1"
+    local actual_role="unknown"
+    
+    echo ""
+    print_color "$CYAN" "🎭 Role Assignment Validation:"
+    echo "   Intended Role (Environment): $intended_role"
+    
+    # Extract actual role from PDP response
+    if echo "$response_json" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.user_roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.user.role' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.user.role // "unknown"')
+    fi
+    
+    echo "   Actual Role (Permit.io): $actual_role"
+    
+    # Compare roles and provide feedback
+    if [ "$actual_role" = "unknown" ]; then
+        print_color "$YELLOW" "   Status: ⚠️ Unable to determine actual role from Permit.io response"
+        echo "   Impact: Using intended role for decision logic"
+    elif [ "$actual_role" = "security" ] && [ "$intended_role" = "Security Officer" ]; then
+        print_color "$GREEN" "   Status: ✅ Roles aligned - Security Officer permissions active"
+        echo "   Enforcement: Full override capabilities available"
+    elif [ "$actual_role" = "$intended_role" ]; then
+        print_color "$GREEN" "   Status: ✅ Roles aligned - Configuration consistent"
+        echo "   Enforcement: Role permissions match workflow expectations"
+    else
+        print_color "$YELLOW" "   Status: ⚠️ Role override detected - Cloud configuration takes precedence"
+        echo "   Intended: $intended_role | Actual: $actual_role"
+        
+        case "$actual_role" in
+            "developer")
+                print_color "$RED" "   Enforcement: Developer restrictions will be enforced"
+                echo "   Override: No override capability for critical vulnerabilities"
+                ;;
+            "editor") 
+                print_color "$YELLOW" "   Enforcement: Editor permissions will be enforced"
+                echo "   Override: Emergency override capability available"
+                ;;
+            "security")
+                print_color "$GREEN" "   Enforcement: Security Officer permissions will be enforced" 
+                echo "   Override: Full override capability available"
+                ;;
+            *)
+                print_color "$YELLOW" "   Enforcement: Custom role '$actual_role' permissions will be enforced"
+                echo "   Override: Capabilities depend on role configuration"
+                ;;
+        esac
+        
+        echo "   Precedence: Permit.io cloud configuration overrides workflow assignment"
+    fi
+    
+    echo ""
+}
+
 # Main execution
 main() {
     print_color "$YELLOW" "Starting Security Gate Evaluation..."
@@ -426,6 +487,9 @@ main() {
         echo "Debug: Permit Response:"
         echo "$PERMIT_RESPONSE" | jq '.'
     fi
+    
+    # Validate role alignment between intended and actual roles
+    validate_role_alignment "$PERMIT_RESPONSE"
     
     # Evaluate response and determine exit code
     evaluate_response "$PERMIT_RESPONSE"

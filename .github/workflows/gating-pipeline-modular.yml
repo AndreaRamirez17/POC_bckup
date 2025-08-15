@@ -197,6 +197,138 @@ jobs:
           echo "   GitHub User: $GITHUB_USER"
           echo "   Permit.io Role: $USER_ROLE"
           echo "   Access Level: $ACCESS_LEVEL"
+
+      - name: Validate Role Assignment
+        id: role_validation
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          USER_KEY: ${{ github.actor }}
+          INTENDED_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+          ACCESS_LEVEL: ${{ steps.user_role.outputs.ACCESS_LEVEL }}
+        run: |
+          echo "🎭 Validating Role Assignment Alignment..."
+          echo "   Intended Role (Workflow): $INTENDED_ROLE"
+          echo "   Access Level: $ACCESS_LEVEL"
+          echo ""
+          
+          # Start PDP temporarily for role validation
+          echo "🚀 Starting temporary PDP for role validation..."
+          export PERMIT_API_KEY="$PERMIT_API_KEY"
+          docker compose -f permit-gating/docker/docker-compose.gating.yml up -d permit-pdp > /dev/null 2>&1
+          
+          # Wait for PDP readiness with timeout
+          echo "⏳ Waiting for PDP readiness..."
+          for i in {1..10}; do
+            if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
+              echo "✅ PDP ready for validation"
+              break
+            elif [ $i -eq 10 ]; then
+              echo "⚠️ PDP timeout - skipping role validation"
+              docker compose -f permit-gating/docker/docker-compose.gating.yml down > /dev/null 2>&1
+              exit 0
+            else
+              sleep 3
+            fi
+          done
+          
+          # Test authorization to determine actual role
+          echo "🔍 Testing authorization to determine actual role..."
+          ACTUAL_ROLE="unknown"
+          ROLE_STATUS="unknown"
+          
+          # Make test authorization call
+          AUTH_RESPONSE=$(curl -s -X POST http://localhost:7001/allowed \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $PERMIT_API_KEY" \
+            -d "{\"user\":{\"key\":\"$USER_KEY\",\"role\":\"$INTENDED_ROLE\",\"tenant\":\"default\"},\"action\":\"deploy\",\"resource\":{\"type\":\"deployment\",\"tenant\":\"default\",\"attributes\":{\"criticalCount\":0}}}" \
+            2>/dev/null || echo "{}")
+          
+          # Try to extract actual role information from debug section
+          if echo "$AUTH_RESPONSE" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user_roles[0] // "unknown"')
+          fi
+          
+          # Determine role status
+          if [ "$ACTUAL_ROLE" = "unknown" ]; then
+            ROLE_STATUS="⚠️ Unable to determine actual role from Permit.io"
+            echo "$ROLE_STATUS"
+            echo "   This may indicate the user is not configured in Permit.io cloud"
+            echo "   The workflow will proceed with intended role assignment"
+          elif [ "$ACTUAL_ROLE" = "security" ] && [ "$INTENDED_ROLE" = "Security Officer" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): Security Officer"
+          elif [ "$ACTUAL_ROLE" = "editor" ] && [ "$INTENDED_ROLE" = "editor" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): editor"
+          elif [ "$ACTUAL_ROLE" = "developer" ] && [ "$INTENDED_ROLE" = "developer" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): developer"
+          else
+            ROLE_STATUS="⚠️ Role override detected"
+            echo "$ROLE_STATUS"
+            echo "   Actual Role (Permit.io): $ACTUAL_ROLE"
+            echo "   Intended Role (Workflow): $INTENDED_ROLE"
+            echo "   Impact: Permit.io cloud configuration takes precedence"
+            
+            # Provide specific guidance based on actual role
+            case "$ACTUAL_ROLE" in
+              "developer")
+                echo "   Enforcement: Developer restrictions will be enforced"
+                echo "   Override: No override capability for critical vulnerabilities"
+                ;;
+              "editor")
+                echo "   Enforcement: Editor permissions will be enforced"
+                echo "   Override: Emergency override capability available"
+                ;;
+              "security")
+                echo "   Enforcement: Security Officer permissions will be enforced"
+                echo "   Override: Full override capability available"
+                ;;
+            esac
+          fi
+          
+          # Add to GitHub Step Summary
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ### 🎭 Role Assignment Validation
+          
+          | Component | Value |
+          |-----------|-------|
+          | **GitHub User** | \`$USER_KEY\` |
+          | **Intended Role** | \`$INTENDED_ROLE\` (workflow logic) |
+          | **Actual Role** | \`$ACTUAL_ROLE\` (Permit.io cloud) |
+          | **Status** | $ROLE_STATUS |
+          | **Precedence** | Permit.io cloud configuration takes precedence |
+          | **Validation Method** | Temporary PDP authorization test |
+          | **Debug Info** | Available in evaluate-gates.sh execution |
+          
+          EOF
+          
+          # Add enforcement details based on actual role
+          if [ "$ACTUAL_ROLE" != "unknown" ] && [ "$ACTUAL_ROLE" != "$INTENDED_ROLE" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          #### 🔒 Security Enforcement Impact
+          - **Authorization Source**: Permit.io cloud configuration
+          - **Role Precedence**: Cloud role overrides workflow assignment  
+          - **Access Control**: Based on actual role (\`$ACTUAL_ROLE\`)
+          - **Audit Trail**: Will reflect actual role in authorization logs
+          
+          EOF
+          fi
+          
+          # Cleanup PDP
+          docker compose -f permit-gating/docker/docker-compose.gating.yml down > /dev/null 2>&1
+          
+          # Set outputs
+          echo "ACTUAL_ROLE=$ACTUAL_ROLE" >> $GITHUB_OUTPUT
+          echo "ROLE_STATUS=$ROLE_STATUS" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "✅ Role validation completed"
           
       - name: Validate Pipeline Configuration
         env:
@@ -480,6 +612,7 @@ jobs:
           echo "| 🔄 Logic Type | Inverted ABAC (Resource Set) |" >> $GITHUB_STEP_SUMMARY
           echo "| 🎯 Policy Engine | Permit.io PDP (Cloud-managed) |" >> $GITHUB_STEP_SUMMARY
           echo "| 🔗 Audit Trail | [View in Permit.io](https://app.permit.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔍 Role Validation | Enhanced with intended vs actual comparison |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Add personalized access level explanation
