@@ -1,5 +1,5 @@
 # Multi-stage build for Spring Boot application
-FROM maven:3.8.6-openjdk-17-slim AS builder
+FROM maven:3.9.8-eclipse-temurin-17-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -15,10 +15,12 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Runtime stage
-FROM openjdk:17-jre-slim
+FROM eclipse-temurin:17-jre-alpine
 
-# Create app user for security
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Install curl for health check and create app user for security
+RUN apk add --no-cache curl && \
+    addgroup -g 1000 appuser && \
+    adduser -u 1000 -G appuser -s /bin/sh -D appuser
 
 # Set working directory
 WORKDIR /app
