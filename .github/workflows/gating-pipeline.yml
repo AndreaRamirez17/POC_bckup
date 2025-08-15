@@ -542,6 +542,21 @@ jobs:
           path: .
         continue-on-error: true
           
+      - name: Recreate expected directory structure
+        run: |
+          # Recreate the expected directory structure for downloaded artifacts
+          echo "📁 Recreating directory structure for security results..."
+          mkdir -p snyk-scanning/results
+          
+          # Move Snyk results files to expected locations (if they exist)
+          mv snyk-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-results.json not found"
+          mv snyk-code-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-code-results.json not found"  
+          mv snyk-container-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-container-results.json not found"
+          
+          # Verify file locations
+          echo "📊 Verifying Snyk results file locations:"
+          ls -la snyk-scanning/results/ || echo "⚠️ snyk-scanning/results directory not found"
+          
       - name: Install jq for JSON parsing
         run: |
           sudo apt-get update
