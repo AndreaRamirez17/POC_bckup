@@ -84,28 +84,115 @@ jobs:
           path: .
         continue-on-error: true
           
-      - name: Recreate expected directory structure
+      - name: Process Security Artifacts
+        id: process_artifacts
         run: |
-          echo "📁 Recreating directory structure for security results..."
-          mkdir -p snyk-scanning/results
+          echo "📁 Processing security scan artifacts..."
+          mkdir -p snyk-scanning/results sonarqube-cloud-scanning/results
           
-          # Move Snyk results files to expected locations (if they exist)
-          mv snyk-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-results.json not found"
-          mv snyk-code-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-code-results.json not found"  
-          mv snyk-container-results.json snyk-scanning/results/ 2>/dev/null || echo "snyk-container-results.json not found"
+          ARTIFACTS_PROCESSED=0
           
-          echo "📊 Verifying Snyk results file locations:"
-          ls -la snyk-scanning/results/ || echo "⚠️ snyk-scanning/results directory not found"
+          # Process Snyk vulnerability results
+          if [ -f "snyk-results.json" ]; then
+            if jq empty snyk-results.json 2>/dev/null; then
+              mv snyk-results.json snyk-scanning/results/
+              echo "✅ Snyk vulnerability scan results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-results.json not found"
+          fi
+          
+          # Process Snyk code analysis results  
+          if [ -f "snyk-code-results.json" ]; then
+            if jq empty snyk-code-results.json 2>/dev/null; then
+              mv snyk-code-results.json snyk-scanning/results/
+              echo "✅ Snyk code analysis results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-code-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-code-results.json not found"
+          fi
+          
+          # Process Snyk container results
+          if [ -f "snyk-container-results.json" ]; then
+            if jq empty snyk-container-results.json 2>/dev/null; then
+              mv snyk-container-results.json snyk-scanning/results/
+              echo "✅ Snyk container scan results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-container-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-container-results.json not found"
+          fi
+          
+          # Process SonarQube quality results
+          if [ -f "quality-gate-result.json" ]; then
+            if jq empty quality-gate-result.json 2>/dev/null; then
+              mv quality-gate-result.json sonarqube-cloud-scanning/results/
+              echo "✅ SonarQube quality gate results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in quality-gate-result.json - skipping"
+            fi
+          else
+            echo "ℹ️ quality-gate-result.json not found"
+          fi
+          
+          echo "📊 Summary: Processed $ARTIFACTS_PROCESSED artifact(s)"
+          echo "ARTIFACTS_COUNT=$ARTIFACTS_PROCESSED" >> $GITHUB_OUTPUT
+          
+          # Show final directory structure
+          echo "📋 Final artifact locations:"
+          find snyk-scanning sonarqube-cloud-scanning -name "*.json" 2>/dev/null || echo "No JSON artifacts found"
           
       - name: Install jq for JSON parsing
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
           
-      - name: Validate Permit.io configuration
+      - name: Validate Pipeline Configuration
         env:
           PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
         run: |
+          echo "🔍 Validating pipeline configuration..."
+          
+          # Check required secrets
+          MISSING_SECRETS=""
+          for secret in PERMIT_API_KEY SNYK_TOKEN SNYK_ORG_ID; do
+            if [ -z "${!secret}" ]; then
+              MISSING_SECRETS="${MISSING_SECRETS} $secret"
+            fi
+          done
+          
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ Missing required secrets:$MISSING_SECRETS"
+            echo "💡 Please configure these secrets in repository settings"
+            exit 1
+          fi
+          
+          # Validate workflow inputs
+          USER_ROLE="${{ github.event.inputs.user_role || 'editor' }}"
+          VALID_ROLES="ci-pipeline developer editor security-admin"
+          
+          if [[ ! " $VALID_ROLES " =~ " $USER_ROLE " ]]; then
+            echo "❌ Invalid user role: $USER_ROLE"
+            echo "✅ Valid options: $VALID_ROLES"
+            exit 1
+          fi
+          
+          echo "✅ Configuration validation passed"
+          echo "   Role: $USER_ROLE"
+          echo "   User: ${{ github.actor }}"
+          
+          # Run original Permit.io validation
           chmod +x permit-gating/scripts/validate-permit.sh
           ./permit-gating/scripts/validate-permit.sh
 
@@ -117,6 +204,8 @@ jobs:
           USER_KEY: ${{ github.actor }}
           USER_ROLE: ${{ github.event.inputs.user_role || 'editor' }}
         run: |
+          # Track performance metrics
+          DOCKER_START_TIME=$(date +%s)
           # Create .env file only for Docker Compose (required by docker-compose.yml)
           cat > .env << EOF
           PERMIT_API_KEY=$PERMIT_API_KEY
@@ -126,30 +215,52 @@ jobs:
           USER_ROLE=${USER_ROLE}
           EOF
           
-          # Start Docker Compose services
-          docker compose up -d --build
+          # Start Docker Compose services with smart image management
+          echo "🐳 Optimizing Docker image downloads..."
           
-          # Wait for services to be ready with better health checks
-          echo "Waiting for services to start..."
-          sleep 30
+          # Check existing images to avoid unnecessary downloads
+          echo "🔍 Checking cached images..."
+          docker image ls --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -E "(permitio|redis|gating)" || echo "No cached images found"
           
-          # Check service health using multiple endpoints
-          echo "Checking service health..."
+          # Pull only missing images with parallel downloads
+          echo "📥 Pulling missing Docker images..."
+          docker compose pull --ignore-pull-failures
           
-          # Check PDP health on correct port
-          for i in {1..10}; do
+          # Start services (removed --build to use cached images when possible)
+          echo "🚀 Starting Docker services..."
+          docker compose up -d
+          
+          # Smart health checking with exponential backoff
+          echo "🏥 Waiting for services to become healthy..."
+          TOTAL_WAIT=0
+          MAX_WAIT=120
+          
+          # Exponential backoff: 1s, 2s, 4s, 8s, 15s, 30s, then 30s intervals
+          for WAIT_TIME in 1 2 4 8 15 30 30 30; do
             if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
-              echo "✓ PDP health endpoint is responding"
+              echo "✅ PDP health endpoint ready after ${TOTAL_WAIT}s"
               break
-            elif [ $i -eq 10 ]; then
-              echo "✗ PDP failed to become ready"
-              docker compose logs permit-pdp
+            elif [ $TOTAL_WAIT -ge $MAX_WAIT ]; then
+              echo "❌ PDP failed to become ready after ${TOTAL_WAIT}s"
+              echo "🔍 Container logs:"
+              docker compose logs permit-pdp --tail=10
               exit 1
             else
-              echo "Attempt $i/10: PDP not ready yet..."
-              sleep 3
+              echo "⏳ PDP not ready yet, waiting ${WAIT_TIME}s... (total: ${TOTAL_WAIT}s)"
+              sleep $WAIT_TIME
+              TOTAL_WAIT=$((TOTAL_WAIT + WAIT_TIME))
             fi
           done
+          
+          # Calculate and report performance metrics
+          DOCKER_END_TIME=$(date +%s)
+          DOCKER_TOTAL_TIME=$((DOCKER_END_TIME - DOCKER_START_TIME))
+          echo "⏱️ Docker startup completed in ${DOCKER_TOTAL_TIME}s"
+          echo "🚀 Performance improvements applied:"
+          echo "   ✅ Smart image caching (skip downloads for existing images)"
+          echo "   ✅ Exponential backoff health checking (vs fixed 30s wait)"
+          echo "   ✅ Parallel image pulls for missing images"
+          echo "   ✅ Enhanced error reporting with timing information"
           
           # Verify PDP is fully synced with Permit.io cloud
           echo "Verifying PDP sync with Permit.io cloud..."
