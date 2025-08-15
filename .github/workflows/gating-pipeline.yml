@@ -58,7 +58,7 @@ jobs:
       - name: Build Spring Boot application
         run: |
           cd microservice-moc-app
-          mvn clean compile
+          mvn clean compile test
           
       - name: Validate Snyk configuration
         env:
@@ -270,14 +270,156 @@ jobs:
           echo "**Project:** cicd-pipeline-poc/microservice-moc-app-container" >> $GITHUB_STEP_SUMMARY
           echo "**Registry:** Docker Hub" >> $GITHUB_STEP_SUMMARY
           
-      - name: Upload Snyk results
+      - name: Validate SonarQube configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          # Make validation script executable and run it
+          chmod +x sonarqube-cloud-scanning/scripts/validate-sonarqube.sh
+          
+          # Run validation and capture exit code
+          ./sonarqube-cloud-scanning/scripts/validate-sonarqube.sh && echo "SONARQUBE_VALIDATED=true" >> $GITHUB_ENV || echo "SONARQUBE_VALIDATED=false" >> $GITHUB_ENV
+
+      - name: Run SonarQube Cloud Analysis
+        id: sonarqube_scan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ] || [ "$SONARQUBE_VALIDATED" = "false" ]; then
+            echo "⚠️ SonarQube Cloud not configured or validation failed - skipping code quality analysis"
+            echo "SONARQUBE_CONFIGURED=false" >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ Code Quality Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "SonarQube Cloud is not configured. Set SONAR_TOKEN secret to enable." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "🔍 Running SonarQube Cloud analysis..."
+            echo "SONARQUBE_CONFIGURED=true" >> $GITHUB_OUTPUT
+            
+            cd microservice-moc-app
+            
+            # Run SonarQube analysis with quality gate wait
+            mvn sonar:sonar \
+              -Dsonar.host.url=https://sonarcloud.io \
+              -Dsonar.token=$SONAR_TOKEN \
+              -Dsonar.organization=${SONAR_ORGANIZATION:-your-organization-key} \
+              -Dsonar.projectKey=${SONAR_PROJECT_KEY:-cicd-pipeline-poc} \
+              -Dsonar.projectName="CI/CD Pipeline Security POC" \
+              -Dsonar.projectVersion=1.0.0 \
+              -Dsonar.qualitygate.wait=true \
+              -Dsonar.qualitygate.timeout=300 || SONAR_EXIT_CODE=$?
+            
+            cd ..
+            
+            # Capture quality gate status with better error handling
+            if [ "${SONAR_EXIT_CODE:-0}" -eq 0 ]; then
+              echo "QUALITY_GATE_STATUS=PASSED" >> $GITHUB_OUTPUT
+              QG_STATUS="✅ PASSED"
+              QG_COLOR="green"
+              echo "✅ SonarQube analysis completed successfully"
+            else
+              echo "QUALITY_GATE_STATUS=FAILED" >> $GITHUB_OUTPUT
+              QG_STATUS="❌ FAILED"
+              QG_COLOR="red"
+              echo "❌ SonarQube analysis completed with quality gate failure (exit code: ${SONAR_EXIT_CODE})"
+              
+              # Don't fail the step here - let the gate evaluation handle it
+              echo "⚠️ Quality gate will be evaluated in the security-gates job"
+            fi
+            
+            # Generate summary
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Code Quality Analysis (SonarQube Cloud)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Quality Gate | **$QG_STATUS** |" >> $GITHUB_STEP_SUMMARY
+            echo "| Project | ${SONAR_PROJECT_KEY:-cicd-pipeline-poc} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+            
+            # Create branch-specific dashboard URL
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${SONAR_PROJECT_KEY:-cicd-pipeline-poc}"
+            else
+              DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${SONAR_PROJECT_KEY:-cicd-pipeline-poc}&branch=${{ github.ref_name }}"
+            fi
+            
+            echo "| Dashboard | [View Analysis Results]($DASHBOARD_URL) |" >> $GITHUB_STEP_SUMMARY
+            
+            # Run quality gate analysis and capture exit code
+            chmod +x sonarqube-cloud-scanning/scripts/analyze-quality-gates.sh
+            
+            echo "🔍 Running detailed quality gate analysis..."
+            
+            # Disable exit on error temporarily to capture exit code
+            set +e
+            ./sonarqube-cloud-scanning/scripts/analyze-quality-gates.sh \
+              -k "${SONAR_PROJECT_KEY:-cicd-pipeline-poc}" \
+              -o sonarqube-cloud-scanning/results/quality-gate-result.json
+            SONAR_GATE_EXIT_CODE=$?
+            set -e
+            
+            # Handle different exit codes from the analysis script
+            case "$SONAR_GATE_EXIT_CODE" in
+              0)
+                echo "✅ Quality gate analysis completed successfully"
+                ;;
+              1)
+                echo "⚠️ Quality gate analysis completed with warnings"
+                ;;
+              2)
+                echo "❌ Quality gate analysis failed - check quality standards"
+                ;;
+              *)
+                echo "❓ Quality gate analysis returned unexpected exit code: $SONAR_GATE_EXIT_CODE"
+                ;;
+            esac
+            
+            # Store the exit code for later evaluation
+            echo "SONAR_GATE_EXIT_CODE=$SONAR_GATE_EXIT_CODE" >> $GITHUB_OUTPUT
+            
+            # Parse and display metrics if available
+            if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
+              BUGS=$(jq -r '.metrics.bugs // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              VULNS=$(jq -r '.metrics.vulnerabilities // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              HOTSPOTS=$(jq -r '.metrics.security_hotspots // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              CODE_SMELLS=$(jq -r '.metrics.code_smells // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              COVERAGE=$(jq -r '.metrics.coverage // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              DUPLICATED_LINES=$(jq -r '.metrics.duplicated_lines_density // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              
+              # Extract ratings
+              SECURITY_RATING=$(jq -r '.metrics.ratings.security // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              RELIABILITY_RATING=$(jq -r '.metrics.ratings.reliability // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              MAINTAINABILITY_RATING=$(jq -r '.metrics.ratings.maintainability // "N/A"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+              
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Detailed Quality Metrics:**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Metric | Value | Rating |" >> $GITHUB_STEP_SUMMARY
+              echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+              echo "| 🐛 Bugs | $BUGS | 🏆 **${RELIABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 🔒 Vulnerabilities | $VULNS | 🛡️ **${SECURITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 🔥 Security Hotspots | $HOTSPOTS | - |" >> $GITHUB_STEP_SUMMARY
+              echo "| 💨 Code Smells | $CODE_SMELLS | 🧹 **${MAINTAINABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+              echo "| 📊 Test Coverage | ${COVERAGE}% | - |" >> $GITHUB_STEP_SUMMARY
+              echo "| 📋 Code Duplication | ${DUPLICATED_LINES}% | - |" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+      - name: Upload security and quality results
         uses: actions/upload-artifact@v4
         with:
-          name: snyk-results
+          name: security-quality-results
           path: |
             snyk-scanning/results/snyk-results.json
             snyk-scanning/results/snyk-code-results.json
             snyk-scanning/results/snyk-container-results.json
+            sonarqube-cloud-scanning/results/quality-gate-result.json
+          if-no-files-found: warn
           
   security-gates:
     name: Security Gate Evaluation
@@ -288,11 +430,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         
-      - name: Download Snyk results
+      - name: Download security and quality results
         uses: actions/download-artifact@v4
         with:
-          name: snyk-results
-          path: snyk-scanning/results
+          name: security-quality-results
+          path: .
           
       - name: Install jq for JSON parsing
         run: |
@@ -407,16 +549,77 @@ jobs:
           echo "  GitHub Actor: ${{ github.actor }}"
           echo "  Expected in audit logs: User=${USER_KEY}, Action=deploy"
           echo ""
-          # Run gate evaluation script with proper environment
+          
+          # Initialize gate results
+          SECURITY_GATE_RESULT=0
+          QUALITY_GATE_RESULT=0
+          
+          # Run security vulnerability gate evaluation
+          echo "Evaluating security vulnerability gates..."
           chmod +x permit-gating/scripts/evaluate-gates.sh
           
           # Disable exit on error temporarily to capture exit code
           set +e
           ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
+          SECURITY_GATE_RESULT=$?
+          set -e
           
-          # Capture exit code
-          GATE_RESULT=$?
+          # Check SonarQube quality gate if configured
+          if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
+            echo ""
+            echo "Evaluating code quality gates..."
+            
+            # Get the actual gate decision and reason from the analysis
+            QG_DECISION=$(jq -r '.quality_gate.decision // "UNKNOWN"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_REASON=$(jq -r '.quality_gate.reason // "No reason provided"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_EXIT_CODE=$(jq -r '.gate_result.exit_code // 0' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            
+            # Use the exit code from the analysis script for consistent logic
+            case "$QG_EXIT_CODE" in
+              0)
+                echo "✅ Code quality gate: PASSED - $QG_REASON"
+                QUALITY_GATE_RESULT=0
+                ;;
+              1)
+                echo "⚠️ Code quality gate: WARNING - $QG_REASON"
+                QUALITY_GATE_RESULT=1
+                ;;
+              2)
+                echo "❌ Code quality gate: FAILED - $QG_REASON"
+                QUALITY_GATE_RESULT=2
+                ;;
+              *)
+                echo "❓ Code quality gate: UNKNOWN - $QG_REASON"
+                QUALITY_GATE_RESULT=0  # Don't block on unknown
+                ;;
+            esac
+            
+            # Store detailed quality info for enhanced reporting
+            echo "SONAR_QG_DECISION=$QG_DECISION" >> $GITHUB_OUTPUT
+            echo "SONAR_QG_REASON=$QG_REASON" >> $GITHUB_OUTPUT
+          else
+            echo "ℹ️ SonarQube quality gate not evaluated (not configured or results not available)"
+            QUALITY_GATE_RESULT=0
+          fi
+          
+          # Combine gate results (take the worst result)
+          if [ $SECURITY_GATE_RESULT -eq 2 ] || [ $QUALITY_GATE_RESULT -eq 2 ]; then
+            GATE_RESULT=2  # FAIL
+            echo ""
+            echo "🚫 Combined gate decision: BLOCKED"
+          elif [ $SECURITY_GATE_RESULT -eq 1 ] || [ $QUALITY_GATE_RESULT -eq 1 ]; then
+            GATE_RESULT=1  # WARNING
+            echo ""
+            echo "⚠️ Combined gate decision: WARNING"
+          else
+            GATE_RESULT=0  # PASS
+            echo ""
+            echo "✅ Combined gate decision: PASSED"
+          fi
+          
           echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "SECURITY_GATE_RESULT=$SECURITY_GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "QUALITY_GATE_RESULT=$QUALITY_GATE_RESULT" >> $GITHUB_OUTPUT
           
           # Re-enable exit on error
           set -e
