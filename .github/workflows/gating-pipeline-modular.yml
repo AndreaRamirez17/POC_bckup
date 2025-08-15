@@ -255,6 +255,14 @@ jobs:
           echo "SECURITY_GATE_RESULT=$SECURITY_GATE_RESULT" >> $GITHUB_OUTPUT
           echo "QUALITY_GATE_RESULT=$QUALITY_GATE_RESULT" >> $GITHUB_OUTPUT
           
+          # Wait for audit logs to be sent to Permit.io cloud
+          echo "Waiting for audit logs to be sent to Permit.io..."
+          sleep 10
+          
+          # Check PDP logs for audit log confirmation
+          echo "Checking PDP logs for audit activity..."
+          docker compose logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found in recent logs"
+          
           # Enhanced summary generation
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 🚪 Security Gate Evaluation Results" >> $GITHUB_STEP_SUMMARY
@@ -266,6 +274,7 @@ jobs:
           echo "| 👤 User | ${USER_KEY} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🎭 Role | ${USER_ROLE} |" >> $GITHUB_STEP_SUMMARY
           echo "| 🎯 Policy Engine | Permit.io PDP |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔗 Audit Trail | [View in Permit.io](https://app.permit.io) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           # Set job status based on gate result
