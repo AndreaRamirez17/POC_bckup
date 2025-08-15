@@ -270,6 +270,19 @@ See [../../docs/MIGRATION.md](../../docs/MIGRATION.md) for detailed migration gu
 **Impact:** Low - just warnings from GitHub Actions internals
 **Solution:** Will be resolved when GitHub updates their actions
 
+#### 5. Audit Logs Missing
+**Issue:** Audit logs not appearing in Permit.io dashboard
+**Root Cause:** Missing audit log processing steps in pipeline
+**Solution:** ✅ **RESOLVED** - Modular pipeline now includes:
+- 10-second wait for audit log transmission
+- PDP log verification step
+- Enhanced authorization context with dashboard links
+
+**Success Verification:**
+Look for this message in PDP logs: `permit-pdp | INFO | Logs uploaded successfully`
+
+For detailed troubleshooting, see [CLAUDE.md](../../CLAUDE.md#audit-log-issues)
+
 ### Debug Mode
 
 Enable debug logging by setting repository secret:
@@ -283,9 +296,11 @@ Enable debug logging by setting repository secret:
 |-----|---------|------------|-------------|
 | Build | 2-3 min | 2-3 min | Same |
 | Security + Quality | 3-4 min | 6-7 min | 45% faster (parallel) |
-| Gates | 1-2 min | 1-2 min | Same |
+| Gates | 1-2.2 min | 1-2 min | +10s for audit processing |
 | Docker | 1 min | 1 min | Same |
-| **Total** | **7-10 min** | **10-13 min** | **~30% faster** |
+| **Total** | **7-10.2 min** | **10-13 min** | **~30% faster** |
+
+**Note:** Gates execution includes 10-second audit log processing for complete compliance visibility in Permit.io dashboard.
 
 ## Best Practices
 

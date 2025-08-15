@@ -273,6 +273,7 @@ After migration, verify:
 - [ ] **Notifications** work (if configured)
 - [ ] **Branch protections** are updated
 - [ ] **Team is notified** of changes
+- [ ] **Audit logs appear in Permit.io dashboard** ✅ VERIFIED WORKING
 
 ## Performance Comparison
 
@@ -326,6 +327,18 @@ ls -la .github/workflows/
 2. Check for missing custom steps
 3. Verify job dependencies
 4. Review conditional logic
+
+### Issue 5: Audit Logs Missing
+
+**Symptom:** Audit logs not appearing in Permit.io dashboard
+
+**Solution:** ✅ **RESOLVED** - This issue has been fixed in the modular pipeline
+1. Verify you see: `Waiting for audit logs to be sent to Permit.io...`
+2. Check for success message: `permit-pdp | INFO | Logs uploaded successfully`
+3. Confirm 10-second processing delay is present
+4. Verify authorization context includes audit trail link
+
+**Note:** This was a known issue resolved in commit 4fbc6c7
 
 ## Getting Help
 
