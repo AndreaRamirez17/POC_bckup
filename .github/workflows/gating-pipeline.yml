@@ -403,6 +403,16 @@ jobs:
             
             cd microservice-moc-app
             
+            # Verify compiled classes exist
+            echo "🔍 Verifying compiled classes for SonarQube analysis..."
+            ls -la target/classes/ || echo "⚠️ No compiled classes found, will compile first"
+            
+            # Ensure classes are compiled for SonarQube analysis
+            if [ ! -d "target/classes" ]; then
+              echo "📦 Compiling classes for SonarQube analysis..."
+              mvn compile
+            fi
+            
             # Run SonarQube analysis with quality gate wait
             mvn sonar:sonar \
               -Dsonar.host.url=https://sonarcloud.io \
@@ -411,6 +421,7 @@ jobs:
               -Dsonar.projectKey=${SONAR_PROJECT_KEY:-cicd-pipeline-poc} \
               -Dsonar.projectName="CI/CD Pipeline Security POC" \
               -Dsonar.projectVersion=1.0.0 \
+              -Dsonar.java.binaries=target/classes \
               -Dsonar.qualitygate.wait=true \
               -Dsonar.qualitygate.timeout=300 || SONAR_EXIT_CODE=$?
             
