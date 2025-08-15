@@ -236,18 +236,26 @@ jobs:
           ACTUAL_ROLE="unknown"
           ROLE_STATUS="unknown"
           
-          # Make test authorization call
-          AUTH_RESPONSE=$(curl -s -X POST http://localhost:7001/allowed \
+          # Make test authorization call using correct payload structure
+          AUTH_RESPONSE=$(curl -s -X POST http://localhost:7766/allowed \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $PERMIT_API_KEY" \
-            -d "{\"user\":{\"key\":\"$USER_KEY\",\"role\":\"$INTENDED_ROLE\",\"tenant\":\"default\"},\"action\":\"deploy\",\"resource\":{\"type\":\"deployment\",\"tenant\":\"default\",\"attributes\":{\"criticalCount\":0}}}" \
+            -d "{\"user\":{\"key\":\"$USER_KEY\",\"attributes\":{\"role\":\"$INTENDED_ROLE\"}},\"action\":\"deploy\",\"resource\":{\"type\":\"deployment\",\"key\":\"role-validation-test\",\"tenant\":\"default\",\"attributes\":{\"criticalCount\":0}}}" \
             2>/dev/null || echo "{}")
+          
+          # Debug: Show response structure for troubleshooting
+          echo "🔍 Debug: Authorization response structure:"
+          echo "$AUTH_RESPONSE" | jq '.' 2>/dev/null || echo "Invalid JSON response: $AUTH_RESPONSE"
           
           # Try to extract actual role information from debug section
           if echo "$AUTH_RESPONSE" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
             ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
           elif echo "$AUTH_RESPONSE" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
             ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user_roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.user.role' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user.role // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.user.attributes.role' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.user.attributes.role // "unknown"')
           fi
           
           # Determine role status
@@ -488,6 +496,9 @@ jobs:
           # Run Safe Deployment Gate evaluation
           echo "Evaluating Safe Deployment Gate with Resource Set matching..."
           chmod +x permit-gating/scripts/evaluate-gates.sh
+          
+          # Enable debug mode for detailed role validation logging
+          export DEBUG=true
           
           # Disable exit on error temporarily to capture exit code
           set +e

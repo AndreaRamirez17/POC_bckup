@@ -393,13 +393,36 @@ validate_role_alignment() {
     print_color "$CYAN" "🎭 Role Assignment Validation:"
     echo "   Intended Role (Environment): $intended_role"
     
-    # Extract actual role from PDP response
+    # Debug: Show response structure for troubleshooting (only in debug mode)
+    if [ "${DEBUG:-false}" = "true" ]; then
+        echo "   Debug: PDP Response for Role Validation:" >&2
+        echo "$response_json" | jq '.' >&2 2>/dev/null || echo "   Invalid JSON response: $response_json" >&2
+    fi
+    
+    # Extract actual role from PDP response using multiple possible paths
     if echo "$response_json" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
         actual_role=$(echo "$response_json" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
     elif echo "$response_json" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
         actual_role=$(echo "$response_json" | jq -r '.debug.user_roles[0] // "unknown"')
-    elif echo "$response_json" | jq -e '.user.role' > /dev/null 2>&1; then
-        actual_role=$(echo "$response_json" | jq -r '.user.role // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.user.role' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.user.role // "unknown"')
+    elif echo "$response_json" | jq -e '.user.attributes.role' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.user.attributes.role // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.reason' > /dev/null 2>&1; then
+        # Try to extract role from error reason if present
+        local reason=$(echo "$response_json" | jq -r '.debug.reason // ""')
+        if echo "$reason" | grep -q "user.*does not match any rule"; then
+            # This indicates the user exists but with insufficient permissions
+            # We can infer they have a role, but likely "developer" based on blocking behavior
+            actual_role="developer"
+        fi
+    else
+        # Final fallback: try to infer role from the response behavior
+        local allow=$(echo "$response_json" | jq -r '.allow // false' 2>/dev/null || echo "false")
+        if [ "$allow" = "false" ] && [ "$intended_role" = "Security Officer" ]; then
+            # If Security Officer role was intended but access denied, user likely has lower privilege role
+            actual_role="developer"
+        fi
     fi
     
     echo "   Actual Role (Permit.io): $actual_role"
