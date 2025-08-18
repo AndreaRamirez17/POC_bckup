@@ -165,7 +165,7 @@ jobs:
           echo "Push docker image"
           docker push ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
 
-
+  # Job 3: Deploy Container image on Cloud Virtual Machine
   deploy_on_dev_environment:
     runs-on: ubuntu-latest
     needs: store_container_images
@@ -197,10 +197,10 @@ jobs:
               docker rm -f "$id_list"
             fi
 
-            echo "getting image from $REGISTRY/$IMAGE"            
-            docker pull $REGISTRY/$IMAGE
+            echo "getting image from rmontesleo/$IMAGE"            
+            docker pull rmontesleo/$IMAGE
             docker images
-            docker container run -d -p 8080:8080 --name web $REGISTRY/$IMAGE
+            docker container run -d -p 8080:8080 --name web rmontesleo/$IMAGE
             sleep 2
             docker ps -a
 
