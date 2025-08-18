@@ -1,4 +1,4 @@
-name: Pipe Line for Quick CI/CD Demo
+name: Pipeline for Quick CI Demo
 
 on:
   # To execute this pipeline needs to be clicked  
@@ -124,7 +124,7 @@ jobs:
           retention-days: 7
 
   # Job 2: Upload Docker imagaes to Registryes
-  store-container-images:  
+  store_container_images:  
     runs-on: ubuntu-latest
     needs: test_and_build
     env:    
@@ -166,4 +166,29 @@ jobs:
           docker push ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
 
 
-      
+  deploy_on_dev_environment:
+    runs-on: ubuntu-latest
+    needs: store_container_images
+    env:
+      DEVELOPMENT_HOST: ${{ secrets.DEVELOPMENT_VM_HOST}}
+      DEVELOPMENT_USERNAME: ${{ secrets.DEVELOPMENT_VM_USERNAME }}
+      DEVELOPMENT_KEY: ${{secrets.DEVELOPMENT_VM_KEY}}
+      DEVELOPMENT_PORT: 22
+      DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
+      DOCKER_TAG: "${{ needs.test_and_build.outputs.docker_image_tag }}"
+    steps:
+      - name: Connect with Development Host
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{env.DEVELOPMENT_HOST}}
+          username: ${{env.DEVELOPMENT_USERNAME}}
+          key: ${{env.DEVELOPMENT_KEY}}
+          port: ${{env.DEVELOPMENT_PORT}}
+          script: |
+            docker rm -f $(docker ps -aq)            
+            docker pull ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
+            docker images
+            docker container run -d -p 8080:8080 --name web ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
+            sleep 2
+            docker ps -a
+
