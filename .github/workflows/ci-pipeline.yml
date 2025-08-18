@@ -181,7 +181,7 @@ jobs:
       - name: Deploy container application on Development Host
         uses: appleboy/ssh-action@v1.0.3
         env:
-          REGISTRY: ${{env.DOCKER_USER_NAME}}
+          REGISTRY: rmonteleo
           IMAGE: ${{env.DOCKER_TAG}}
         with:
           host: ${{env.DEVELOPMENT_HOST}}
@@ -197,10 +197,11 @@ jobs:
               docker rm -f "$id_list"
             fi
 
-            echo "getting image from rmontesleo/$IMAGE"            
-            docker pull rmontesleo/$IMAGE
+            echo "#### Registry $REGISTRY"
+            echo "#### Image $IMAGE"            
+            docker pull $REGISTRY/$IMAGE
             docker images
-            docker container run -d -p 8080:8080 --name web rmontesleo/$IMAGE
+            docker container run -d -p 8080:8080 --name web $REGISTRY/$IMAGE
             sleep 2
             docker ps -a
 
