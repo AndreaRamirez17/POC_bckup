@@ -9,7 +9,7 @@ on:
 
 env:
   # Define common environment variables
-  JAVA_VERSION: 11
+  JAVA_VERSION: 17
   PROJECT_NAME: 'gating-poc-app'
   PROJECT_PATH: 'microservice-moc-app'
   DOCKERFILE_PATH: 'microservice-moc-app/Dockerfile'
@@ -148,7 +148,7 @@ jobs:
 
       - name: Tag Docker Image
         run: |
-          echo "Tagging docker image, current one is ${{env.docker_image_tag}}"
+          echo "Tagging docker image, current one is ${{ steps.get-tag-name.outputs.docker_tag }}"
           
 
       - name: Push Docker Image
