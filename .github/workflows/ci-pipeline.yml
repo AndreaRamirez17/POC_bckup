@@ -9,7 +9,8 @@ env:
   # Define common environment variables
   JAVA_VERSION: 11
   PROJECT_NAME: 'gating-poc-app'
-  DOCKERFILE_PATH: 'microservice-moc-app'
+  PROJECT_PATH: 'microservice-moc-app'
+  DOCKERFILE_PATH: 'microservice-moc-app/Dockerfile'
 
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
@@ -18,19 +19,37 @@ jobs:
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
-      #docker_image_tag: ${{ steps.get-tag-name.outputs.docker_tag }}
+      docker_image_tag: ${{ steps.get-tag-name.outputs.docker_tag }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Verify Code
+        run: |
+          ls -la
+          echo "Docker path ${{ env.DOCKERFILE_PATH}}"
+          echo "##############################"
+          cat ${{ env.DOCKERFILE_PATH}}
+          echo "##############################"
+
 
       - name: Set up Java ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
             distribution: 'temurin'
             java-version: ${{ env.JAVA_VERSION }}
-            cache: 'maven'
-
+            
+      
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4.2.4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+      
+      
       - name: Get Maven Project Version
         id: get-version
         run: |
@@ -41,8 +60,98 @@ jobs:
       - name: Build Maven Project and Get Jar Name
         id: get-jar-name
         run: |
+          echo "See current directory" 
+          ls -la
+          pwd
+          cd microservice-moc-app
+          pwd
+          ls -la
           # Build without run the tests. The test will be executed in the next step
           mvn clean package -DskipTests
           JAR_NAME=$(ls target/*.jar | head -n 1 | xargs -n 1 basename )
           echo "jar_name=$JAR_NAME >> $GITHUB_OUTPUT"
           echo "Discoverd JAR name: $JAR_NAME"
+
+      - name: Execute Unit Tests
+        env:
+          MAVEN_OPTS: -Dmaven.wagon.http.pool=false -Dmaven.wagon.http.retryHandlre.count=3
+        run: |
+          cd microservice-moc-app
+          mvn test
+
+      - name: Upload JAR Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ success() }}
+        with:
+          name: ${{env.PROJECT_NAME}}-jar
+          path: microservice-moc-app/target/${{ steps.get-jar-name.outputs.jar_name}}
+          retention-days: 7
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./microservice-moc-app/
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: false # Only build locally
+          load: true  # Load image from Docker
+          tags: ${{ env.PROJECT_NAME }}:${{ github.sha }}
+          #target: production
+
+      - name: Get Docker Tag Name
+        id: get-tag-name
+        run: |
+          TAG_NAME="${{ env.PROJECT_NAME}}:${{ github.sha }}"
+          echo "docker_tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "TAG_NAME is $TAG_NAME"
+
+      - name: List Docker Images
+        run: docker images
+          
+      - name: Export Docker Image to Tar (for subsequent jobs)
+        run: docker save ${{ env.PROJECT_NAME }}:${{ github.sha}} -o ${{ env.PROJECT_NAME}}.tar
+
+      - name: Upload Docker Image Tarball Artifact
+        uses: actions/upload-artifact@v4
+        if: ${{ success() }}
+        with:
+          name: ${{ env.PROJECT_NAME}}-docker-image
+          path: ${{ env.PROJECT_NAME}}.tar
+          retention-days: 7
+
+  # Job 2: Upload Docker imagaes to Registryes
+  store-container-images:
+    runs-on: ubuntu-latest
+    needs: test_and_build
+
+    steps:
+      - name: Download Docker Image Tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PROJECT_NAME }}-docker-image
+          path: ./download-artifacts/docker-image/
+
+      - name: Load Current Docker Image
+        run: |
+          ls -la
+          docker load -i ./download-artifacts/docker-image/${{ env.PROJECT_NAME}}.tar
+          docker images
+
+      - name: Tag Docker Image
+        run: |
+          echo "Tagging docker image"
+
+      - name: Push Docker Image
+        run: |
+          echo "Push docker image"
+
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: docker.io. # ( If uses docker.io as registry this attribute is optional)
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}

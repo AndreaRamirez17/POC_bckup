@@ -73,3 +73,23 @@ temp/
 # Claude Code files
 .claude/
 CLAUDE.md
+
+# Terraform files
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+crash.log
+crash.*.log
+
+# Don't ignore these Terraform files
+!**/.terraform.lock.hcl
+!*.auto.tfvars
+**/env
