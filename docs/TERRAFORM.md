@@ -45,3 +45,7 @@ cd ./terraform/akamai/development
 cd ./terraform/akamai/testing
 
 ```
+
+## REFERENCES
+
+- [Pass environment variables to shell script](https://github.com/appleboy/ssh-action?tab=readme-ov-file#pass-environment-variables-to-shell-script)
