@@ -131,8 +131,7 @@ jobs:
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
       DOCKER_USER_TOKEN: ${{ secrets.POC_DOCKER_TOKEN }}
       # Use the job output exported by the producing job. Can't reference other-job 'steps'.
-      DOCKER_TAG: "${{ needs.test_and_build.outputs.docker_image_tag }}"
-
+      DOCKER_TAG: ${{ needs.test_and_build.outputs.docker_image_tag }}
 
     steps:
       - name: Login to Docker Hub
@@ -175,7 +174,7 @@ jobs:
       DEVELOPMENT_KEY: ${{secrets.DEVELOPMENT_VM_KEY}}
       DEVELOPMENT_PORT: 22
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
-      DOCKER_TAG: "${{ needs.test_and_build.outputs.docker_image_tag }}"
+      DOCKER_TAG: ${{ needs.test_and_build.outputs.docker_image_tag }}
     steps:
 
       - name: Deploy container application on Development Host
@@ -197,8 +196,8 @@ jobs:
               docker rm -f "$id_list"
             fi
 
-            echo "#### Registry $REGISTRY"
-            echo "#### Image $IMAGE"            
+            echo "#### Registry $REGISTRY ####"
+            echo "#### Image $IMAGE #####"            
             docker pull $REGISTRY/$IMAGE
             docker images
             docker container run -d -p 8080:8080 --name web $REGISTRY/$IMAGE
