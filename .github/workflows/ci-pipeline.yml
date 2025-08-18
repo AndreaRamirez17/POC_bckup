@@ -185,7 +185,7 @@ jobs:
           key: ${{env.DEVELOPMENT_KEY}}
           port: ${{env.DEVELOPMENT_PORT}}
           script: |
-            docker rm -f $(docker ps -aq)            
+            docker rm -f $(docker ps -aq) || echo "no containers righ now"           
             docker pull ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
             docker images
             docker container run -d -p 8080:8080 --name web ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
