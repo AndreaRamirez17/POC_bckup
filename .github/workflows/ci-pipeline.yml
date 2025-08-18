@@ -1,6 +1,4 @@
-# This Pipile 
-
-name: Pipe Line for Basic CI/CD Demo
+name: Pipe Line for Quick CI/CD Demo
 
 on:
   # To execute this pipeline needs to be clicked  
