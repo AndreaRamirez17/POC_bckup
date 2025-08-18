@@ -1,0 +1,26 @@
+{
+  "timestamp": "2025-08-15T00:52:38Z",
+  "project_key": "poc-pipeline_poc-pipeline",
+  "quality_gate": {
+    "status": "OK",
+    "decision": "PASS",
+    "reason": "Quality gate passed"
+  },
+  "metrics": {
+    "bugs": 0,
+    "vulnerabilities": 0,
+    "security_hotspots": 0,
+    "code_smells": 0,
+    "coverage": 25.0,
+    "duplicated_lines_density": 0.0,
+    "ratings": {
+      "security": "A",
+      "reliability": "A",
+      "maintainability": "A"
+    }
+  },
+  "gate_result": {
+    "decision": "PASS",
+    "exit_code": 0
+  }
+}

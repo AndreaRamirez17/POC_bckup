@@ -43,6 +43,7 @@ fi
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Function to print colored output
@@ -201,34 +202,65 @@ evaluate_response() {
     local decision="UNKNOWN"
     local violations
     
-    # Parse response with error handling
+    # Parse response with error handling - properly handle boolean values
     allow=$(echo "$response" | jq -r '.allow // false' 2>/dev/null || echo "false")
     
-    # The PDP doesn't return a 'decision' field, so we need to determine it based on the response
     # Check if there's a debug field with error codes
     local error_code=$(echo "$response" | jq -r '.debug.abac.code // .debug.rbac.code // ""' 2>/dev/null || echo "")
     
-    # Note: Removed editor override logic to show true PDP decisions for audit clarity
+    # Check if ABAC rules were involved
+    local has_abac=$(echo "$response" | jq -r 'if .debug.abac then "true" else "false" end' 2>/dev/null || echo "false")
+    local abac_resource_set=$(echo "$response" | jq -r '.debug.abac.resource_set // ""' 2>/dev/null || echo "")
     
-    # Determine decision based on allow field and vulnerability counts
-    if [ "$allow" = "true" ]; then
-        if [ "$HIGH_COUNT" -gt 0 ]; then
+    # Main decision logic based on Permit.io's 'allow' field
+    # NOTE: Using inverted ABAC logic with "Safe Deployment Gate"
+    # - Safe Deployment Gate matches when criticalCount = 0 (safe deployments)
+    # - Critical vulnerabilities fall back to base deployment resource (restricted access)
+    if [ "$allow" = "false" ]; then
+        # Request was denied
+        decision="FAIL"
+        if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+            echo "   🔒 ABAC Rule Blocking: Safe Deployment Gate not matched, access denied" >&2
+        else
+            echo "   ❌ Access Denied: Insufficient permissions on base deployment resource" >&2
+        fi
+    elif [ "$allow" = "true" ]; then
+        # Request was allowed - check context
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            # Critical vulnerabilities present but allowed (override scenario)
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                decision="PASS_OVERRIDE"
+                echo "   🔑 ABAC Override: User has permission on base deployment resource despite critical vulnerabilities" >&2
+            else
+                decision="PASS_OVERRIDE"
+                echo "   🔑 Role Override: Deployment allowed despite critical vulnerabilities" >&2
+            fi
+        elif [ "$HIGH_COUNT" -gt 0 ]; then
             decision="PASS_WITH_WARNINGS"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: No critical vulnerabilities, high severity warnings" >&2
+            else
+                echo "   ⚠️  High severity vulnerabilities present" >&2
+            fi
         elif [ "$MEDIUM_COUNT" -gt 0 ]; then
             decision="PASS_WITH_INFO"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: No critical vulnerabilities, medium severity info" >&2
+            else
+                echo "   ℹ️  Medium severity vulnerabilities present" >&2
+            fi
         else
             decision="PASS"
+            if [ "$has_abac" = "true" ] && [ -n "$abac_resource_set" ]; then
+                echo "   ✅ Safe Deployment Gate: Clean deployment, no vulnerabilities" >&2
+            else
+                echo "   ✅ Security gates passed" >&2
+            fi
         fi
     else
-        # Check if it's due to critical vulnerabilities
-        if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            decision="FAIL"
-        elif [ -n "$error_code" ]; then
-            # If there's an error code, it means the policy evaluation failed
-            decision="FAIL"
-        else
-            decision="UNKNOWN"
-        fi
+        # Unexpected response
+        decision="FAIL"
+        echo "   ❓ Unexpected response from PDP" >&2
     fi
     violations=$(echo "$response" | jq -r '.violations // []' 2>/dev/null || echo "[]")
     
@@ -301,12 +333,29 @@ evaluate_response() {
             print_color "$YELLOW" "💡 Medium severity vulnerabilities detected. Consider remediation in next maintenance window."
             return 1
             ;;
+        "PASS_OVERRIDE")
+            print_color "$YELLOW" "🔑 DECISION: PASS WITH OVERRIDE - Critical vulnerabilities overridden by role privileges"
+            echo ""
+            echo "⚠️  Override Context:"
+            echo "   • User: ${USER_KEY}"
+            echo "   • Role: ${USER_ROLE}" 
+            echo "   • Critical vulnerabilities present: $CRITICAL_COUNT"
+            echo "   • Permit.io RBAC allowed deployment despite policy denial"
+            echo ""
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                echo "🔴 Critical Vulnerabilities (Overridden):"
+                echo "$CRITICAL_VULNS" | jq -r '.[] | "   • \(.packageName)@\(.version): \(.title)"' 2>/dev/null || echo "   Unable to display vulnerability details"
+                echo ""
+            fi
+            print_color "$YELLOW" "⚡ DEPLOYMENT AUTHORIZED BY ROLE OVERRIDE - Proceed with extreme caution and audit trail."
+            return 0
+            ;;
         "FAIL")
             print_color "$RED" "❌ DECISION: FAIL - Hard gate triggered"
             echo ""
             
             # Display reason from PDP debug information
-            local reason=$(echo "$response" | jq -r '.debug.abac.reason // .debug.rbac.reason // "Policy evaluation failed"' 2>/dev/null || echo "Policy evaluation failed")
+            local reason=$(echo "$response" | jq -r '.debug.abac.reason // .debug.rbac.reason // "Critical vulnerabilities detected"' 2>/dev/null || echo "Policy evaluation failed")
             echo "🚫 Blocking Issue: $reason"
             echo ""
             
@@ -332,6 +381,91 @@ evaluate_response() {
             return 2
             ;;
     esac
+}
+
+# Function to validate role alignment between intended and actual roles
+validate_role_alignment() {
+    local intended_role="${USER_ROLE:-unknown}"
+    local response_json="$1"
+    local actual_role="unknown"
+    
+    echo ""
+    print_color "$CYAN" "🎭 Role Assignment Validation:"
+    echo "   Intended Role (Environment): $intended_role"
+    
+    # Debug: Show response structure for troubleshooting (only in debug mode)
+    if [ "${DEBUG:-false}" = "true" ]; then
+        echo "   Debug: PDP Response for Role Validation:" >&2
+        echo "$response_json" | jq '.' >&2 2>/dev/null || echo "   Invalid JSON response: $response_json" >&2
+    fi
+    
+    # Extract actual role from PDP response using multiple possible paths
+    if echo "$response_json" | jq -e '.debug.request.user.attributes.roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.request.user.attributes.roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.user_roles[0] // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.user.role' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.debug.user.role // "unknown"')
+    elif echo "$response_json" | jq -e '.user.attributes.role' > /dev/null 2>&1; then
+        actual_role=$(echo "$response_json" | jq -r '.user.attributes.role // "unknown"')
+    elif echo "$response_json" | jq -e '.debug.reason' > /dev/null 2>&1; then
+        # Try to extract role from error reason if present
+        local reason=$(echo "$response_json" | jq -r '.debug.reason // ""')
+        if echo "$reason" | grep -q "user.*does not match any rule"; then
+            # This indicates the user exists but with insufficient permissions
+            # We can infer they have a role, but likely "developer" based on blocking behavior
+            actual_role="developer"
+        fi
+    else
+        # Final fallback: try to infer role from the response behavior
+        local allow=$(echo "$response_json" | jq -r '.allow // false' 2>/dev/null || echo "false")
+        if [ "$allow" = "false" ] && [ "$intended_role" = "Security Officer" ]; then
+            # If Security Officer role was intended but access denied, user likely has lower privilege role
+            actual_role="developer"
+        fi
+    fi
+    
+    echo "   Actual Role (Permit.io): $actual_role"
+    
+    # Compare roles and provide feedback
+    if [ "$actual_role" = "unknown" ]; then
+        print_color "$YELLOW" "   Status: ⚠️ Unable to determine actual role from Permit.io response"
+        echo "   Impact: Using intended role for decision logic"
+    elif [ "$actual_role" = "security" ] && [ "$intended_role" = "Security Officer" ]; then
+        print_color "$GREEN" "   Status: ✅ Roles aligned - Security Officer permissions active"
+        echo "   Enforcement: Full override capabilities available"
+    elif [ "$actual_role" = "$intended_role" ]; then
+        print_color "$GREEN" "   Status: ✅ Roles aligned - Configuration consistent"
+        echo "   Enforcement: Role permissions match workflow expectations"
+    else
+        print_color "$YELLOW" "   Status: ⚠️ Role override detected - Cloud configuration takes precedence"
+        echo "   Intended: $intended_role | Actual: $actual_role"
+        
+        case "$actual_role" in
+            "developer")
+                print_color "$RED" "   Enforcement: Developer restrictions will be enforced"
+                echo "   Override: No override capability for critical vulnerabilities"
+                ;;
+            "editor") 
+                print_color "$YELLOW" "   Enforcement: Editor permissions will be enforced"
+                echo "   Override: Emergency override capability available"
+                ;;
+            "security")
+                print_color "$GREEN" "   Enforcement: Security Officer permissions will be enforced" 
+                echo "   Override: Full override capability available"
+                ;;
+            *)
+                print_color "$YELLOW" "   Enforcement: Custom role '$actual_role' permissions will be enforced"
+                echo "   Override: Capabilities depend on role configuration"
+                ;;
+        esac
+        
+        echo "   Precedence: Permit.io cloud configuration overrides workflow assignment"
+    fi
+    
+    echo ""
 }
 
 # Main execution
@@ -378,6 +512,9 @@ main() {
         echo "Debug: Permit Response:"
         echo "$PERMIT_RESPONSE" | jq '.'
     fi
+    
+    # Validate role alignment between intended and actual roles
+    validate_role_alignment "$PERMIT_RESPONSE"
     
     # Evaluate response and determine exit code
     evaluate_response "$PERMIT_RESPONSE"

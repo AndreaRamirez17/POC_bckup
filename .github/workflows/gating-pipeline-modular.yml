@@ -1,0 +1,787 @@
+name: CI/CD Security Gating Pipeline (Modular)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      override_gates:
+        description: 'Override Safe Deployment Gate (emergency deployment only)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  JAVA_VERSION: '17'
+  MAVEN_VERSION: '3.8.6'
+  DOCKER_BUILDKIT: 1
+  PDP_URL: http://localhost:7766
+
+jobs:
+  build:
+    name: Build Application
+    uses: ./.github/workflows/build-application.yml
+    with:
+      java-version: '17'
+      maven-version: '3.8.6'
+          
+  security-scan:
+    name: Security Scan
+    needs: build
+    uses: ./.github/workflows/security-scanning.yml
+    with:
+      java-version: '17'
+      run-container-scan: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+
+  code-quality:
+    name: Code Quality Analysis
+    needs: build
+    uses: ./.github/workflows/quality-analysis.yml
+    with:
+      java-version: '17'
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+      SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+          
+  security-gates:
+    name: Security Gate Evaluation
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download security results
+        uses: actions/download-artifact@v4
+        with:
+          name: security-results
+          path: .
+          
+      - name: Download quality results
+        uses: actions/download-artifact@v4
+        with:
+          name: quality-results
+          path: .
+        continue-on-error: true
+          
+      - name: Process Security Artifacts
+        id: process_artifacts
+        run: |
+          echo "📁 Processing security scan artifacts..."
+          mkdir -p snyk-scanning/results sonarqube-cloud-scanning/results
+          
+          ARTIFACTS_PROCESSED=0
+          
+          # Process Snyk vulnerability results
+          if [ -f "snyk-results.json" ]; then
+            if jq empty snyk-results.json 2>/dev/null; then
+              mv snyk-results.json snyk-scanning/results/
+              echo "✅ Snyk vulnerability scan results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-results.json not found"
+          fi
+          
+          # Process Snyk code analysis results  
+          if [ -f "snyk-code-results.json" ]; then
+            if jq empty snyk-code-results.json 2>/dev/null; then
+              mv snyk-code-results.json snyk-scanning/results/
+              echo "✅ Snyk code analysis results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-code-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-code-results.json not found"
+          fi
+          
+          # Process Snyk container results
+          if [ -f "snyk-container-results.json" ]; then
+            if jq empty snyk-container-results.json 2>/dev/null; then
+              mv snyk-container-results.json snyk-scanning/results/
+              echo "✅ Snyk container scan results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in snyk-container-results.json - skipping"
+            fi
+          else
+            echo "ℹ️ snyk-container-results.json not found"
+          fi
+          
+          # Process SonarQube quality results
+          if [ -f "quality-gate-result.json" ]; then
+            if jq empty quality-gate-result.json 2>/dev/null; then
+              mv quality-gate-result.json sonarqube-cloud-scanning/results/
+              echo "✅ SonarQube quality gate results processed"
+              ARTIFACTS_PROCESSED=$((ARTIFACTS_PROCESSED + 1))
+            else
+              echo "⚠️ Invalid JSON in quality-gate-result.json - skipping"
+            fi
+          else
+            echo "ℹ️ quality-gate-result.json not found"
+          fi
+          
+          echo "📊 Summary: Processed $ARTIFACTS_PROCESSED artifact(s)"
+          echo "ARTIFACTS_COUNT=$ARTIFACTS_PROCESSED" >> $GITHUB_OUTPUT
+          
+          # Show final directory structure
+          echo "📋 Final artifact locations:"
+          find snyk-scanning sonarqube-cloud-scanning -name "*.json" 2>/dev/null || echo "No JSON artifacts found"
+          
+      - name: Install jq for JSON parsing
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          
+      - name: Determine User Role Based on GitHub Username
+        id: user_role
+        run: |
+          GITHUB_USER="${{ github.actor }}"
+          
+          echo "🔍 Determining Safe Deployment Gate access level for: $GITHUB_USER"
+          
+          # Map GitHub usernames to their Permit.io roles and access levels
+          case "$GITHUB_USER" in
+            "david-santander")
+              USER_ROLE="Security Officer"  # Full override capabilities in Permit.io
+              ACCESS_LEVEL="FULL_OVERRIDE"
+              echo "🛡️ Security Officer access: Full Safe Deployment Gate override capabilities"
+              echo "   ✅ Safe Deployment Gate: Access when criticalCount = 0"
+              echo "   🔓 Base Deployment: Override access for critical vulnerabilities"
+              ;;
+            "security-manager"|"security-team")
+              USER_ROLE="Security Officer"
+              ACCESS_LEVEL="FULL_OVERRIDE"
+              echo "🛡️ Security Officer access granted for security team member"
+              ;;
+            "release-manager"|"editor-user")
+              USER_ROLE="editor"  # Emergency override capabilities
+              ACCESS_LEVEL="EMERGENCY_OVERRIDE"
+              echo "✏️ Editor access: Emergency deployment override capabilities"
+              echo "   ✅ Safe Deployment Gate: Access when criticalCount = 0"
+              echo "   ⚠️ Emergency Override: Can deploy with critical vulnerabilities"
+              ;;
+            "github-actions"|"dependabot[bot]")
+              USER_ROLE="ci-pipeline"  # Automated systems
+              ACCESS_LEVEL="SAFE_ONLY"
+              echo "🤖 CI Pipeline access: Automated system restricted to safe deployments"
+              echo "   ✅ Safe Deployment Gate: Access ONLY when criticalCount = 0"
+              ;;
+            *)
+              # Default: Standard developers - most restrictive access
+              USER_ROLE="developer"
+              ACCESS_LEVEL="SAFE_ONLY"
+              echo "👨‍💻 Developer access: Standard user restricted to safe deployments"
+              echo "   ✅ Safe Deployment Gate: Access ONLY when criticalCount = 0"
+              echo "   ❌ Base Deployment: No access when critical vulnerabilities present"
+              ;;
+          esac
+          
+          echo "USER_ROLE=$USER_ROLE" >> $GITHUB_OUTPUT
+          echo "ACCESS_LEVEL=$ACCESS_LEVEL" >> $GITHUB_OUTPUT
+          echo ""
+          echo "🎯 Final Role Assignment:"
+          echo "   GitHub User: $GITHUB_USER"
+          echo "   Permit.io Role: $USER_ROLE"
+          echo "   Access Level: $ACCESS_LEVEL"
+
+      - name: Validate Role Assignment
+        id: role_validation
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          USER_KEY: ${{ github.actor }}
+          INTENDED_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+          ACCESS_LEVEL: ${{ steps.user_role.outputs.ACCESS_LEVEL }}
+        run: |
+          echo "🎭 Validating Role Assignment Alignment..."
+          echo "   Intended Role (Workflow): $INTENDED_ROLE"
+          echo "   Access Level: $ACCESS_LEVEL"
+          echo ""
+          
+          # Start PDP temporarily for role validation
+          echo "🚀 Starting temporary PDP for role validation..."
+          export PERMIT_API_KEY="$PERMIT_API_KEY"
+          docker compose -f permit-gating/docker/docker-compose.gating.yml up -d permit-pdp > /dev/null 2>&1
+          
+          # Wait for PDP readiness with timeout
+          echo "⏳ Waiting for PDP readiness..."
+          for i in {1..10}; do
+            if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
+              echo "✅ PDP ready for validation"
+              break
+            elif [ $i -eq 10 ]; then
+              echo "⚠️ PDP timeout - skipping role validation"
+              docker compose -f permit-gating/docker/docker-compose.gating.yml down > /dev/null 2>&1
+              exit 0
+            else
+              sleep 3
+            fi
+          done
+          
+          # Test authorization to determine actual role
+          echo "🔍 Testing authorization to determine actual role..."
+          ACTUAL_ROLE="unknown"
+          ROLE_STATUS="unknown"
+          
+          # Make test authorization call using correct payload structure
+          AUTH_RESPONSE=$(curl -s -X POST http://localhost:7766/allowed \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $PERMIT_API_KEY" \
+            -d "{\"user\":{\"key\":\"$USER_KEY\",\"attributes\":{\"role\":\"$INTENDED_ROLE\"}},\"action\":\"deploy\",\"resource\":{\"type\":\"deployment\",\"key\":\"role-validation-test\",\"tenant\":\"default\",\"attributes\":{\"criticalCount\":0}}}" \
+            2>/dev/null || echo "{}")
+          
+          # Debug: Show response structure for troubleshooting
+          echo "🔍 Debug: Authorization response structure:"
+          echo "$AUTH_RESPONSE" | jq '.' 2>/dev/null || echo "Invalid JSON response: $AUTH_RESPONSE"
+          
+          # Try to extract actual role information from debug section
+          if echo "$AUTH_RESPONSE" | jq -e '.debug.request.user.attributes.roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.request.user.attributes.roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.rbac.allowing_roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.rbac.allowing_roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.user_roles[0]' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user_roles[0] // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.debug.user.role' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.debug.user.role // "unknown"')
+          elif echo "$AUTH_RESPONSE" | jq -e '.user.attributes.role' > /dev/null 2>&1; then
+            ACTUAL_ROLE=$(echo "$AUTH_RESPONSE" | jq -r '.user.attributes.role // "unknown"')
+          fi
+          
+          # Determine role status
+          if [ "$ACTUAL_ROLE" = "unknown" ]; then
+            ROLE_STATUS="⚠️ Unable to determine actual role from Permit.io"
+            echo "$ROLE_STATUS"
+            echo "   This may indicate the user is not configured in Permit.io cloud"
+            echo "   The workflow will proceed with intended role assignment"
+          elif [ "$ACTUAL_ROLE" = "security" ] && [ "$INTENDED_ROLE" = "Security Officer" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): Security Officer"
+          elif [ "$ACTUAL_ROLE" = "editor" ] && [ "$INTENDED_ROLE" = "editor" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): editor"
+          elif [ "$ACTUAL_ROLE" = "developer" ] && [ "$INTENDED_ROLE" = "developer" ]; then
+            ROLE_STATUS="✅ Roles aligned"
+            echo "$ROLE_STATUS - Configuration consistent"
+            echo "   Actual Role (Permit.io): developer"
+          else
+            ROLE_STATUS="⚠️ Role override detected"
+            echo "$ROLE_STATUS"
+            echo "   Actual Role (Permit.io): $ACTUAL_ROLE"
+            echo "   Intended Role (Workflow): $INTENDED_ROLE"
+            echo "   Impact: Permit.io cloud configuration takes precedence"
+            
+            # Provide specific guidance based on actual role
+            case "$ACTUAL_ROLE" in
+              "developer")
+                echo "   Enforcement: Developer restrictions will be enforced"
+                echo "   Override: No override capability for critical vulnerabilities"
+                ;;
+              "editor")
+                echo "   Enforcement: Editor permissions will be enforced"
+                echo "   Override: Emergency override capability available"
+                ;;
+              "security")
+                echo "   Enforcement: Security Officer permissions will be enforced"
+                echo "   Override: Full override capability available"
+                ;;
+            esac
+          fi
+          
+          # Add to GitHub Step Summary
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ### 🎭 Role Assignment Validation
+          
+          | Component | Value |
+          |-----------|-------|
+          | **GitHub User** | \`$USER_KEY\` |
+          | **Intended Role** | \`$INTENDED_ROLE\` (workflow logic) |
+          | **Actual Role** | \`$ACTUAL_ROLE\` (Permit.io cloud) |
+          | **Status** | $ROLE_STATUS |
+          | **Precedence** | Permit.io cloud configuration takes precedence |
+          | **Validation Method** | Temporary PDP authorization test |
+          | **Debug Info** | Available in evaluate-gates.sh execution |
+          
+          EOF
+          
+          # Add enforcement details based on actual role
+          if [ "$ACTUAL_ROLE" != "unknown" ] && [ "$ACTUAL_ROLE" != "$INTENDED_ROLE" ]; then
+            cat >> $GITHUB_STEP_SUMMARY << EOF
+          #### 🔒 Security Enforcement Impact
+          - **Authorization Source**: Permit.io cloud configuration
+          - **Role Precedence**: Cloud role overrides workflow assignment  
+          - **Access Control**: Based on actual role (\`$ACTUAL_ROLE\`)
+          - **Audit Trail**: Will reflect actual role in authorization logs
+          
+          EOF
+          fi
+          
+          # Cleanup PDP
+          docker compose -f permit-gating/docker/docker-compose.gating.yml down > /dev/null 2>&1
+          
+          # Set outputs
+          echo "ACTUAL_ROLE=$ACTUAL_ROLE" >> $GITHUB_OUTPUT
+          echo "ROLE_STATUS=$ROLE_STATUS" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "✅ Role validation completed"
+          
+      - name: Validate Pipeline Configuration
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+          USER_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+        run: |
+          echo "🔍 Validating Safe Deployment Gate pipeline configuration..."
+          
+          # Check required secrets
+          MISSING_SECRETS=""
+          for secret in PERMIT_API_KEY SNYK_TOKEN SNYK_ORG_ID; do
+            if [ -z "${!secret}" ]; then
+              MISSING_SECRETS="${MISSING_SECRETS} $secret"
+            fi
+          done
+          
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ Missing required secrets:$MISSING_SECRETS"
+            echo "💡 Please configure these secrets in repository settings"
+            exit 1
+          fi
+          
+          echo "✅ Configuration validation passed"
+          echo "   GitHub User: ${{ github.actor }}"
+          echo "   Permit.io Role: $USER_ROLE"
+          echo "   Pipeline Type: Safe Deployment Gate (Inverted ABAC)"
+          
+          # Run Permit.io validation with assigned role
+          chmod +x permit-gating/scripts/validate-permit.sh
+          ./permit-gating/scripts/validate-permit.sh
+
+      - name: Start Safe Deployment Gate Services (PDP Only)
+        env:
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+          USER_KEY: ${{ github.actor }}
+          USER_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+        run: |
+          # Track performance metrics
+          DOCKER_START_TIME=$(date +%s)
+          # Create .env file only for Docker Compose (required by docker-compose.yml)
+          cat > .env << EOF
+          PERMIT_API_KEY=$PERMIT_API_KEY
+          SNYK_TOKEN=$SNYK_TOKEN
+          SNYK_ORG_ID=$SNYK_ORG_ID
+          USER_KEY=${USER_KEY}
+          USER_ROLE=${USER_ROLE}
+          EOF
+          
+          # Start Safe Deployment Gate infrastructure (PDP only)
+          echo "🐳 Starting Safe Deployment Gate infrastructure..."
+          echo "   ✅ PDP (Policy Decision Point): Required for authorization decisions"
+          echo "   🚫 OPAL Server: Not needed - policies managed by Permit.io cloud"
+          echo "   🚫 OPAL Fetcher: Not needed - vulnerability data passed directly"
+          echo "   🚫 Redis: Not needed - no OPAL services required"
+          echo ""
+          
+          # Check existing images to avoid unnecessary downloads
+          echo "🔍 Checking cached images..."
+          docker image ls --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}" | grep -E "(permitio)" || echo "No cached PDP images found"
+          
+          # Use optimized compose file (only starts required PDP service)
+          echo "📥 Pulling PDP image if needed..."
+          docker compose -f permit-gating/docker/docker-compose.gating.yml pull --ignore-pull-failures
+          
+          # Start only required services
+          echo "🚀 Starting Safe Deployment Gate services..."
+          docker compose -f permit-gating/docker/docker-compose.gating.yml up -d
+          
+          # Verify only required services are running
+          echo "📋 Active Safe Deployment Gate services:"
+          docker compose -f permit-gating/docker/docker-compose.gating.yml ps
+          
+          # Smart health checking with exponential backoff
+          echo "🏥 Waiting for services to become healthy..."
+          TOTAL_WAIT=0
+          MAX_WAIT=120
+          
+          # Exponential backoff: 1s, 2s, 4s, 8s, 15s, 30s, then 30s intervals
+          for WAIT_TIME in 1 2 4 8 15 30 30 30; do
+            if curl -sf http://localhost:7001/healthy > /dev/null 2>&1; then
+              echo "✅ PDP health endpoint ready after ${TOTAL_WAIT}s"
+              break
+            elif [ $TOTAL_WAIT -ge $MAX_WAIT ]; then
+              echo "❌ PDP failed to become ready after ${TOTAL_WAIT}s"
+              echo "🔍 PDP Container logs:"
+              docker compose -f permit-gating/docker/docker-compose.gating.yml logs permit-pdp --tail=10
+              exit 1
+            else
+              echo "⏳ PDP not ready yet, waiting ${WAIT_TIME}s... (total: ${TOTAL_WAIT}s)"
+              sleep $WAIT_TIME
+              TOTAL_WAIT=$((TOTAL_WAIT + WAIT_TIME))
+            fi
+          done
+          
+          # Calculate and report performance metrics
+          DOCKER_END_TIME=$(date +%s)
+          DOCKER_TOTAL_TIME=$((DOCKER_END_TIME - DOCKER_START_TIME))
+          echo "⏱️ Docker startup completed in ${DOCKER_TOTAL_TIME}s"
+          echo "🚀 Safe Deployment Gate optimizations applied:"
+          echo "   ✅ PDP-only architecture (simplified from OPAL + Redis + Fetcher)"
+          echo "   ✅ Smart image caching (skip downloads for existing images)"
+          echo "   ✅ Exponential backoff health checking (vs fixed 30s wait)"
+          echo "   ✅ Enhanced error reporting with timing information"
+          
+          # Verify PDP is fully synced with Permit.io cloud
+          echo "Verifying PDP sync with Permit.io cloud..."
+          for i in {1..20}; do
+            response=$(curl -s -X POST http://localhost:7766/allowed \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer $PERMIT_API_KEY" \
+              -d '{"user":{"key":"david-santander","attributes":{"role":"editor"}},"action":"test","resource":{"type":"deployment","key":"sync-test","attributes":{}}}' 2>/dev/null || echo "{}")
+            
+            if echo "$response" | grep -q '"synced":true'; then
+              echo "✓ PDP is fully synced with Permit.io cloud"
+              break
+            elif [ $i -eq 20 ]; then
+              echo "⚠️ PDP sync verification timeout - proceeding anyway"
+            else
+              echo "  Waiting for PDP to sync with cloud... ($i/20)"
+              sleep 3
+            fi
+          done
+          
+      - name: Debug Safe Deployment Gate Context
+        run: |
+          echo "🔍 Safe Deployment Gate Context:"
+          echo "  GitHub Actor: ${{ github.actor }}"
+          echo "  Assigned Role: ${{ steps.user_role.outputs.USER_ROLE }}"
+          echo "  Access Level: ${{ steps.user_role.outputs.ACCESS_LEVEL }}"
+          echo "  Authorization Logic: Inverted ABAC (allow safe deployments)"
+          
+      - name: Evaluate Safe Deployment Gate
+        id: gate_evaluation
+        env:
+          PDP_URL: ${{ env.PDP_URL }}
+          PERMIT_API_KEY: ${{ secrets.PERMIT_API_KEY }}
+          USER_KEY: ${{ github.actor }}
+          USER_ROLE: ${{ steps.user_role.outputs.USER_ROLE }}
+          ACCESS_LEVEL: ${{ steps.user_role.outputs.ACCESS_LEVEL }}
+        run: |
+          echo "🚪 Safe Deployment Gate Evaluation (Inverted ABAC Logic):"
+          echo "  👤 GitHub User: ${USER_KEY}"
+          echo "  🎭 Permit.io Role: ${USER_ROLE}"
+          echo "  🔐 Access Level: ${ACCESS_LEVEL}"
+          echo "  🔄 Logic: Resource Set matches when criticalCount = 0"
+          echo "  📊 Architecture: PDP-only (no OPAL services needed)"
+          echo ""
+          
+          # Initialize gate results
+          SECURITY_GATE_RESULT=0
+          QUALITY_GATE_RESULT=0
+          
+          # Run Safe Deployment Gate evaluation
+          echo "Evaluating Safe Deployment Gate with Resource Set matching..."
+          chmod +x permit-gating/scripts/evaluate-gates.sh
+          
+          # Enable debug mode for detailed role validation logging
+          export DEBUG=true
+          
+          # Disable exit on error temporarily to capture exit code
+          set +e
+          ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
+          SECURITY_GATE_RESULT=$?
+          set -e
+          
+          # Extract critical vulnerability count for detailed explanation
+          CRITICAL_COUNT=0
+          if [ -f "snyk-scanning/results/snyk-results.json" ]; then
+            CRITICAL_COUNT=$(jq '.vulnerabilities | map(select(.severity == "critical")) | length // 0' snyk-scanning/results/snyk-results.json 2>/dev/null || echo "0")
+          fi
+          
+          # Explain Safe Deployment Gate decision logic
+          echo ""
+          echo "🔍 Safe Deployment Gate Analysis:"
+          case $SECURITY_GATE_RESULT in
+            0)
+              case "$ACCESS_LEVEL" in
+                "SAFE_ONLY")
+                  echo "✅ Safe Deployment Gate: MATCHED (criticalCount = 0)"
+                  echo "   🟢 Result: Safe deployment authorized for $USER_ROLE"
+                  echo "   📋 Resource Set: 'Safe Deployment Gate' condition satisfied"
+                  ;;
+                "EMERGENCY_OVERRIDE"|"FULL_OVERRIDE")
+                  if [ "$CRITICAL_COUNT" -gt 0 ]; then
+                    echo "🔓 Safe Deployment Gate: OVERRIDE ACTIVE"
+                    echo "   🟡 Result: Critical vulnerabilities ($CRITICAL_COUNT) overridden by $USER_ROLE"
+                    echo "   📋 Resource: Base deployment accessed with override permission"
+                  else
+                    echo "✅ Safe Deployment Gate: MATCHED (criticalCount = 0)"
+                    echo "   🟢 Result: Safe deployment authorized for $USER_ROLE"
+                    echo "   📋 Resource Set: 'Safe Deployment Gate' condition satisfied"
+                  fi
+                  ;;
+              esac
+              ;;
+            2)
+              echo "❌ Safe Deployment Gate: BLOCKED"
+              echo "   🔴 Critical vulnerabilities present: $CRITICAL_COUNT"
+              echo "   🚫 User role '$USER_ROLE' cannot access base deployment resource"
+              echo "   📋 Resource Set: 'Safe Deployment Gate' condition NOT met (criticalCount > 0)"
+              echo "   💡 Solutions:"
+              echo "      • Fix critical vulnerabilities to enable Safe Deployment Gate"
+              echo "      • Use editor or Security Officer role for emergency override"
+              ;;
+          esac
+          
+          # Check SonarQube quality gate if configured
+          if [ -f "sonarqube-cloud-scanning/results/quality-gate-result.json" ]; then
+            echo ""
+            echo "Evaluating code quality gates..."
+            
+            QG_DECISION=$(jq -r '.quality_gate.decision // "UNKNOWN"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_REASON=$(jq -r '.quality_gate.reason // "No reason provided"' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            QG_EXIT_CODE=$(jq -r '.gate_result.exit_code // 0' sonarqube-cloud-scanning/results/quality-gate-result.json)
+            
+            case "$QG_EXIT_CODE" in
+              0)
+                echo "✅ Code quality gate: PASSED - $QG_REASON"
+                QUALITY_GATE_RESULT=0
+                ;;
+              1)
+                echo "⚠️ Code quality gate: WARNING - $QG_REASON"
+                QUALITY_GATE_RESULT=1
+                ;;
+              2)
+                echo "❌ Code quality gate: FAILED - $QG_REASON"
+                QUALITY_GATE_RESULT=2
+                ;;
+              *)
+                echo "❓ Code quality gate: UNKNOWN - $QG_REASON"
+                QUALITY_GATE_RESULT=0
+                ;;
+            esac
+          else
+            echo "ℹ️ SonarQube quality gate not evaluated (not configured or results not available)"
+            QUALITY_GATE_RESULT=0
+          fi
+          
+          # Combine Safe Deployment Gate + Quality Gate results (take the worst result)
+          if [ $SECURITY_GATE_RESULT -eq 2 ] || [ $QUALITY_GATE_RESULT -eq 2 ]; then
+            GATE_RESULT=2  # BLOCKED
+            echo ""
+            echo "🚫 Combined gate decision: BLOCKED"
+            echo "   Safe Deployment Gate blocked deployment due to security policy"
+          elif [ $SECURITY_GATE_RESULT -eq 1 ] || [ $QUALITY_GATE_RESULT -eq 1 ]; then
+            GATE_RESULT=1  # WARNING
+            echo ""
+            echo "⚠️ Combined gate decision: WARNING"
+            echo "   Safe deployment proceeding with non-blocking warnings"
+          else
+            GATE_RESULT=0  # PASS
+            echo ""
+            echo "✅ Combined gate decision: PASSED"
+            echo "   Safe Deployment Gate authorized clean deployment"
+          fi
+          
+          echo "GATE_RESULT=$GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "SECURITY_GATE_RESULT=$SECURITY_GATE_RESULT" >> $GITHUB_OUTPUT
+          echo "QUALITY_GATE_RESULT=$QUALITY_GATE_RESULT" >> $GITHUB_OUTPUT
+          
+          # Wait for audit logs to be sent to Permit.io cloud
+          echo "Waiting for audit logs to be sent to Permit.io..."
+          sleep 10
+          
+          # Check PDP logs for audit log confirmation
+          echo "Checking PDP logs for audit activity..."
+          docker compose -f permit-gating/docker/docker-compose.gating.yml logs permit-pdp --tail=20 | grep -i "audit\|log" || echo "No audit log entries found in recent logs"
+          
+          # Enhanced Safe Deployment Gate summary generation
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚪 Safe Deployment Gate Results for ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🔐 Authorization Context" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 GitHub User | ${USER_KEY} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎭 Permit.io Role | ${USER_ROLE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔐 Access Level | ${ACCESS_LEVEL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔄 Logic Type | Inverted ABAC (Resource Set) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Policy Engine | Permit.io PDP (Cloud-managed) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔗 Audit Trail | [View in Permit.io](https://app.permit.io) |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔍 Role Validation | Enhanced with intended vs actual comparison |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Add personalized access level explanation
+          case "$ACCESS_LEVEL" in
+            "FULL_OVERRIDE")
+              echo "### 🛡️ Security Officer Access" >> $GITHUB_STEP_SUMMARY
+              echo "- ✅ **Safe Deployment Gate**: Full access when criticalCount = 0" >> $GITHUB_STEP_SUMMARY
+              echo "- 🔓 **Base Deployment**: Override access for critical vulnerabilities" >> $GITHUB_STEP_SUMMARY
+              echo "- 📋 **Audit Trail**: All overrides logged in [Permit.io Dashboard](https://app.permit.io)" >> $GITHUB_STEP_SUMMARY
+              echo "- ⚠️ **Responsibility**: Document justification for emergency deployments" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "EMERGENCY_OVERRIDE")
+              echo "### ✏️ Editor Access" >> $GITHUB_STEP_SUMMARY
+              echo "- ✅ **Safe Deployment Gate**: Access when criticalCount = 0" >> $GITHUB_STEP_SUMMARY
+              echo "- ⚠️ **Emergency Override**: Can deploy with critical vulnerabilities" >> $GITHUB_STEP_SUMMARY
+              echo "- 📝 **Post-Deployment**: Must address critical vulnerabilities immediately" >> $GITHUB_STEP_SUMMARY
+              echo "- 📋 **Audit Required**: All overrides tracked and reviewed" >> $GITHUB_STEP_SUMMARY
+              ;;
+            "SAFE_ONLY")
+              echo "### 👨‍💻 Developer/CI Pipeline Access" >> $GITHUB_STEP_SUMMARY
+              echo "- ✅ **Safe Deployment Gate**: Access ONLY when criticalCount = 0" >> $GITHUB_STEP_SUMMARY
+              echo "- ❌ **Base Deployment**: No access when critical vulnerabilities present" >> $GITHUB_STEP_SUMMARY
+              echo "- 💡 **Guidance**: Fix critical vulnerabilities to enable deployment" >> $GITHUB_STEP_SUMMARY
+              echo "- 🔒 **Security**: Least privilege access model enforced" >> $GITHUB_STEP_SUMMARY
+              ;;
+          esac
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Set job status based on gate result
+          case $GATE_RESULT in
+            0)
+              echo "### ✅ Gate Decision: **PASSED**" >> $GITHUB_STEP_SUMMARY
+              if [ "$CRITICAL_COUNT" -gt 0 ] && [[ "$ACCESS_LEVEL" == *"OVERRIDE" ]]; then
+                echo "🔓 **Result:** Emergency override active - critical vulnerabilities bypassed by $USER_ROLE." >> $GITHUB_STEP_SUMMARY
+                echo "⚠️ **Post-Deployment Action Required:** Address $CRITICAL_COUNT critical vulnerabilities immediately." >> $GITHUB_STEP_SUMMARY
+              else
+                echo "🎉 **Result:** Safe Deployment Gate matched - no critical vulnerabilities detected." >> $GITHUB_STEP_SUMMARY
+                echo "✅ **Security Status:** Clean deployment authorized by Safe Deployment Gate." >> $GITHUB_STEP_SUMMARY
+              fi
+              exit 0
+              ;;
+            1)
+              echo "### ⚠️ Gate Decision: **WARNING**" >> $GITHUB_STEP_SUMMARY
+              echo "📋 **Result:** Safe deployment proceeding with non-blocking vulnerabilities." >> $GITHUB_STEP_SUMMARY
+              echo "💡 **Recommendation:** Address high/medium vulnerabilities in next maintenance window." >> $GITHUB_STEP_SUMMARY
+              exit 0
+              ;;
+            2)
+              echo "### ❌ Gate Decision: **BLOCKED**" >> $GITHUB_STEP_SUMMARY
+              echo "🛑 **Result:** Safe Deployment Gate blocked - critical vulnerabilities present." >> $GITHUB_STEP_SUMMARY
+              echo "🔴 **Critical Vulnerabilities:** $CRITICAL_COUNT found" >> $GITHUB_STEP_SUMMARY
+              echo "💡 **Solutions:**" >> $GITHUB_STEP_SUMMARY
+              echo "   - Fix critical vulnerabilities to enable Safe Deployment Gate" >> $GITHUB_STEP_SUMMARY
+              echo "   - Use editor or Security Officer role for emergency override" >> $GITHUB_STEP_SUMMARY
+              
+              if [ "${{ github.event.inputs.override_gates }}" != "true" ]; then
+                exit 2
+              else
+                echo "⚠️ **EMERGENCY OVERRIDE ACTIVATED** - Gates bypassed by authorized user" >> $GITHUB_STEP_SUMMARY
+                echo "📋 **Audit Required:** Document justification and create remediation plan" >> $GITHUB_STEP_SUMMARY
+                exit 0
+              fi
+              ;;
+            *)
+              echo "### ❓ Gate Decision: **ERROR**" >> $GITHUB_STEP_SUMMARY
+              echo "🚨 **Result:** Safe Deployment Gate evaluation error - check configuration" >> $GITHUB_STEP_SUMMARY
+              exit 2
+              ;;
+          esac
+          
+      - name: Stop Safe Deployment Gate Services
+        if: always()
+        run: |
+          echo "🔽 Stopping Safe Deployment Gate services..."
+          docker compose -f permit-gating/docker/docker-compose.gating.yml down
+          
+  build-docker-image:
+    name: Build Docker Image
+    needs: security-gates
+    if: success() || (github.event.inputs.override_gates == 'true')
+    uses: ./.github/workflows/docker-build.yml
+    with:
+      image-tag: ${{ github.sha }}
+      load-prebuilt-image: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+          
+  deploy:
+    name: Deploy Application
+    runs-on: ubuntu-latest
+    needs: build-docker-image
+    if: github.ref == 'refs/heads/main' && (success() || github.event.inputs.override_gates == 'true')
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          
+      - name: Load Docker image
+        run: |
+          docker load < gating-poc-app.tar
+          
+      - name: Deploy to environment
+        run: |
+          echo "🚀 Deploying application version ${{ github.sha }}"
+          
+          # Capture deployment start time
+          DEPLOY_START=$(date +%s)
+          
+          # Add actual deployment steps here
+          # For PoC, we'll just run the container locally
+          docker run -d -p 8080:8080 --name gating-poc-app gating-poc-app:${{ github.sha }}
+          
+          # Wait for application to start
+          sleep 10
+          
+          # Health check
+          HEALTH_STATUS="Unknown"
+          if curl -f http://localhost:8080/actuator/health 2>/dev/null; then
+            HEALTH_STATUS="Healthy"
+            HEALTH_ICON="✅"
+          else
+            HEALTH_STATUS="Unhealthy"
+            HEALTH_ICON="❌"
+            exit 1
+          fi
+          
+          # Calculate deployment time
+          DEPLOY_END=$(date +%s)
+          DEPLOY_TIME=$((DEPLOY_END - DEPLOY_START))
+          
+          # Enhanced deployment summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 Deployment Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Status | **✅ SUCCESS** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Version | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🌍 Environment | Production |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏱️ Deploy Time | ${DEPLOY_TIME}s |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💚 Health Check | ${HEALTH_ICON} ${HEALTH_STATUS} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔀 Branch | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 👤 Deployed By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.override_gates }}" = "true" ]; then
+            echo "⚠️ **Note:** Security gates were overridden for this deployment." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop gating-poc-app || true
+          docker rm gating-poc-app || true

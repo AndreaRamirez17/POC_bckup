@@ -87,26 +87,34 @@ build_application() {
 start_services() {
     print_color "$BLUE" "Starting Docker Compose services..."
     
-    docker-compose down 2>/dev/null || true
-    docker-compose up -d --build
+    # Use the correct gating-specific docker-compose file
+    docker compose -f permit-gating/docker/docker-compose.gating.yml down 2>/dev/null || true
+    docker compose -f permit-gating/docker/docker-compose.gating.yml up -d --build
     
     # Wait for services to be ready
     print_color "$YELLOW" "Waiting for services to start..."
-    sleep 15
+    sleep 20
     
-    # Check service health
-    local services=("permit-pdp:7766" "spring-app:7777" "opal-fetcher:8000")
+    # Check service health - updated for gating services
+    local services=("permit-pdp:7001" "permit-pdp:7766")
     
     for service in "${services[@]}"; do
         IFS=':' read -r name port <<< "$service"
-        if curl -sf "http://localhost:$port/health" > /dev/null 2>&1 || \
-           curl -sf "http://localhost:$port/healthy" > /dev/null 2>&1 || \
-           curl -sf "http://localhost:$port/actuator/health" > /dev/null 2>&1; then
-            print_color "$GREEN" "✓ $name is ready"
+        if curl -sf "http://localhost:$port/healthy" > /dev/null 2>&1; then
+            print_color "$GREEN" "✓ $name is ready on port $port"
         else
-            print_color "$YELLOW" "⚠ $name might not be fully ready"
+            print_color "$YELLOW" "⚠ $name might not be fully ready on port $port"
         fi
     done
+    
+    # Check if PDP container is running
+    if docker ps | grep -q "permit-pdp"; then
+        print_color "$GREEN" "✓ Permit PDP container is running"
+    else
+        print_color "$RED" "✗ Permit PDP container is not running"
+        print_color "$YELLOW" "Checking container logs..."
+        docker compose -f permit-gating/docker/docker-compose.gating.yml logs permit-pdp --tail=10
+    fi
 }
 
 # Run Snyk scan
@@ -148,7 +156,7 @@ test_gates() {
     # Make the script executable
     chmod +x permit-gating/scripts/evaluate-gates.sh
     
-    # Run gate evaluation
+    # Run gate evaluation with current user role settings
     ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
     local exit_code=$?
     
@@ -171,15 +179,60 @@ test_gates() {
     return $exit_code
 }
 
+# Test with different roles
+test_roles() {
+    print_color "$BLUE" "Testing different user roles with ABAC policies..."
+    echo ""
+    
+    # Backup current .env settings
+    local original_role="$USER_ROLE"
+    local original_key="$USER_KEY"
+    
+    # Test scenarios for Safe Deployment Gate
+    local test_scenarios=(
+        "developer:test-developer-user:Should FAIL with critical vulnerabilities"
+        "editor:david-santander:Should PASS with override for critical vulnerabilities"
+        "ci-pipeline:github-actions:Default pipeline behavior"
+    )
+    
+    for scenario in "${test_scenarios[@]}"; do
+        IFS=':' read -r role key description <<< "$scenario"
+        
+        print_color "$YELLOW" "Testing: $description"
+        print_color "$BLUE" "Role: $role, User: $key"
+        
+        # Temporarily update .env file
+        sed -i "s/USER_ROLE=.*/USER_ROLE=$role/" .env
+        sed -i "s/USER_KEY=.*/USER_KEY=$key/" .env
+        
+        # Run test
+        ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
+        local exit_code=$?
+        
+        echo ""
+        print_color "$BLUE" "Result for $role: Exit code $exit_code"
+        echo ""
+        echo "----------------------------------------"
+        echo ""
+    done
+    
+    # Restore original settings
+    sed -i "s/USER_ROLE=.*/USER_ROLE=$original_role/" .env
+    sed -i "s/USER_KEY=.*/USER_KEY=$original_key/" .env
+    
+    print_color "$GREEN" "Role-based testing completed"
+}
+
 # View logs
 view_logs() {
     print_color "$BLUE" "Service Logs (last 20 lines each):"
     echo ""
     
-    for service in permit-pdp spring-app opal-fetcher redis; do
-        if docker-compose ps | grep -q $service; then
+    # Updated for gating services
+    for service in permit-pdp redis opal-fetcher opal-server; do
+        if docker compose -f permit-gating/docker/docker-compose.gating.yml ps | grep -q $service; then
             print_color "$YELLOW" "=== $service ==="
-            docker-compose logs --tail=20 $service 2>/dev/null || echo "No logs available"
+            docker compose -f permit-gating/docker/docker-compose.gating.yml logs --tail=20 $service 2>/dev/null || echo "No logs available"
             echo ""
         fi
     done
@@ -188,7 +241,7 @@ view_logs() {
 # Cleanup
 cleanup() {
     print_color "$BLUE" "Cleaning up..."
-    docker-compose down
+    docker compose -f permit-gating/docker/docker-compose.gating.yml down
     print_color "$GREEN" "✓ Services stopped"
 }
 
@@ -203,9 +256,10 @@ show_menu() {
     echo "2) Start services only"
     echo "3) Run Snyk scan only"
     echo "4) Test gate evaluation only"
-    echo "5) View service logs"
-    echo "6) Stop all services"
-    echo "7) Exit"
+    echo "5) Test different user roles with ABAC"
+    echo "6) View service logs"
+    echo "7) Stop all services"
+    echo "8) Exit"
     echo ""
     read -p "Select option: " option
     
@@ -234,12 +288,17 @@ show_menu() {
             test_gates
             ;;
         5)
-            view_logs
+            check_requirements
+            check_env_file
+            test_roles
             ;;
         6)
-            cleanup
+            view_logs
             ;;
         7)
+            cleanup
+            ;;
+        8)
             exit 0
             ;;
         *)

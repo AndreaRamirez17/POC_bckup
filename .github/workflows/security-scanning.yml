@@ -1,0 +1,155 @@
+name: 'Security Scanning'
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      run-container-scan:
+        description: 'Whether to run container scanning'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      SNYK_TOKEN:
+        required: true
+      SNYK_ORG_ID:
+        required: true
+        
+    outputs:
+      critical-count:
+        description: 'Number of critical vulnerabilities found'
+        value: ${{ jobs.security-scan.outputs.critical-count }}
+      high-count:
+        description: 'Number of high vulnerabilities found'
+        value: ${{ jobs.security-scan.outputs.high-count }}
+      medium-count:
+        description: 'Number of medium vulnerabilities found'
+        value: ${{ jobs.security-scan.outputs.medium-count }}
+      low-count:
+        description: 'Number of low vulnerabilities found'
+        value: ${{ jobs.security-scan.outputs.low-count }}
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    outputs:
+      critical-count: ${{ steps.security-summary.outputs.critical-count }}
+      high-count: ${{ steps.security-summary.outputs.high-count }}
+      medium-count: ${{ steps.security-summary.outputs.medium-count }}
+      low-count: ${{ steps.security-summary.outputs.low-count }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Java and Maven
+        uses: ./.github/actions/setup-java-maven
+        with:
+          java-version: ${{ inputs.java-version }}
+          
+      - name: Download build artifacts
+        uses: ./.github/actions/download-build-artifacts
+        
+      - name: Validate Snyk configuration
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          chmod +x snyk-scanning/scripts/validate-snyk.sh
+          ./snyk-scanning/scripts/validate-snyk.sh
+
+      - name: Run Snyk security scan
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG_ID: ${{ secrets.SNYK_ORG_ID }}
+        run: |
+          # Install Snyk CLI
+          npm install -g snyk
+          
+          # Authenticate with Snyk
+          snyk auth $SNYK_TOKEN
+          
+          # Ensure results directory exists
+          mkdir -p snyk-scanning/results
+          
+          # Run Snyk test and capture results
+          cd microservice-moc-app
+          
+          echo "🔍 Running Snyk dependency scan..."
+          snyk test --json > ../snyk-scanning/results/snyk-results.json || echo "⚠️ Snyk test completed with exit code $?"
+          
+          echo "📊 Checking Snyk results file..."
+          ls -la ../snyk-scanning/results/snyk-results.json || echo "❌ Snyk results file not created"
+          
+      - name: Send results to Snyk UI (Monitor)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          echo "📤 Sending scan results to Snyk dashboard..."
+          snyk monitor --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-deps" || true
+          
+      - name: Run Snyk Code Analysis (SAST)
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          cd microservice-moc-app
+          
+          echo "🔍 Running Snyk Code analysis for security issues in source code..."
+          
+          # Run Snyk Code test (SAST)
+          snyk code test --json > ../snyk-scanning/results/snyk-code-results.json || true
+          
+      - name: Build and scan Docker image
+        if: inputs.run-container-scan
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          # Build Docker image
+          cd microservice-moc-app
+          docker build -t gating-poc-app:${{ github.sha }} .
+          docker tag gating-poc-app:${{ github.sha }} cicd-poc-app:scan
+          
+          # Scan Docker image with Snyk
+          echo "🐳 Scanning Docker image for vulnerabilities..."
+          snyk container test cicd-poc-app:scan --json > ../snyk-scanning/results/snyk-container-results.json || true
+          
+          # Send container results to Snyk UI
+          snyk container monitor cicd-poc-app:scan --org=${{ secrets.SNYK_ORG_ID }} --project-name="cicd-pipeline-poc/microservice-moc-app-container" || true
+          
+      - name: Save Docker image for reuse
+        if: inputs.run-container-scan
+        run: |
+          docker save gating-poc-app:${{ github.sha }} > gating-poc-app-temp.tar
+          
+      - name: Upload Docker image artifact
+        if: inputs.run-container-scan
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-temp
+          path: gating-poc-app-temp.tar
+          retention-days: 1
+          
+      - name: Generate security summary
+        id: security-summary
+        uses: ./.github/actions/generate-security-summary
+        with:
+          results-file: snyk-scanning/results/snyk-results.json
+          
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-results
+          path: |
+            snyk-scanning/results/snyk-results.json
+            snyk-scanning/results/snyk-code-results.json
+            snyk-scanning/results/snyk-container-results.json
+          if-no-files-found: warn
+          retention-days: 1

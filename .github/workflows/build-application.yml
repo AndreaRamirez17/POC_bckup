@@ -1,0 +1,45 @@
+name: 'Build Application'
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      maven-version:
+        description: 'Maven version to use'
+        required: false
+        type: string
+        default: '3.8.6'
+      
+jobs:
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Java and Maven
+        uses: ./.github/actions/setup-java-maven
+        with:
+          java-version: ${{ inputs.java-version }}
+          
+      - name: Build Spring Boot application
+        run: |
+          cd microservice-moc-app
+          mvn clean compile test
+          
+      - name: Package application
+        run: |
+          cd microservice-moc-app
+          mvn package -DskipTests
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: microservice-moc-app
+          retention-days: 1

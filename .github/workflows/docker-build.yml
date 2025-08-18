@@ -1,0 +1,93 @@
+name: 'Docker Build'
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: 'Docker image tag to use'
+        required: false
+        type: string
+        default: 'latest'
+      load-prebuilt-image:
+        description: 'Whether to load a prebuilt Docker image from artifacts'
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  build-docker-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Download pre-built Docker image
+        id: download_image
+        if: inputs.load-prebuilt-image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-temp
+        continue-on-error: true
+        
+      - name: Load or build Docker image
+        run: |
+          if [ "${{ inputs.load-prebuilt-image }}" = "true" ] && [ -f "gating-poc-app-temp.tar" ]; then
+            echo "📦 Loading pre-built Docker image..."
+            docker load < gating-poc-app-temp.tar
+            echo "✅ Reused Docker image from security scanning job"
+          else
+            echo "🔨 Building Docker image..."
+            cd microservice-moc-app
+            docker build -t gating-poc-app:${{ inputs.image-tag }} .
+            if [ "${{ inputs.load-prebuilt-image }}" = "true" ]; then
+              echo "⚠️ Built new Docker image (artifact not found)"
+            else
+              echo "✅ Built fresh Docker image as requested"
+            fi
+          fi
+          
+      - name: Tag Docker image
+        run: |
+          # Ensure we have the correct tag
+          if [ "${{ inputs.image-tag }}" != "latest" ]; then
+            docker tag gating-poc-app:${{ inputs.image-tag }} gating-poc-app:latest
+          fi
+          
+          # Show final image tags
+          echo "🏷️ Available Docker images:"
+          docker images gating-poc-app
+          
+      - name: Save Docker image for deployment
+        run: |
+          docker save gating-poc-app:${{ inputs.image-tag }} > gating-poc-app.tar
+          
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: gating-poc-app.tar
+          retention-days: 1
+          
+      - name: Docker build summary
+        run: |
+          # Add Docker build summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🐳 Docker Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏷️ Image Tag | \`gating-poc-app:${{ inputs.image-tag }}\` |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.load-prebuilt-image }}" = "true" ] && [ -f "gating-poc-app-temp.tar" ]; then
+            echo "| 📦 Build Type | Pre-built (reused from security scan) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| 📦 Build Type | Fresh build |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "| 💾 Artifact | docker-image |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📅 Built | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🎯 Ready for | Deployment |" >> $GITHUB_STEP_SUMMARY

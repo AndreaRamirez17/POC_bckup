@@ -72,6 +72,7 @@ temp/
 
 # Claude Code files
 .claude/
+CLAUDE.md
 
 # Terraform files
 **/.terraform/*

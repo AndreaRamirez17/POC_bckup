@@ -1,0 +1,148 @@
+name: 'Generate Quality Summary'
+description: 'Parses SonarQube quality gate results and generates GitHub step summary'
+inputs:
+  results-file:
+    description: 'Path to the SonarQube quality gate results JSON file'
+    required: true
+  project-key:
+    description: 'SonarQube project key for dashboard links'
+    required: true
+  branch-name:
+    description: 'Current branch name for dashboard links'
+    required: false
+    default: 'main'
+  summary-title:
+    description: 'Title for the quality summary section'
+    required: false
+    default: '📊 Code Quality Analysis (SonarQube Cloud)'
+
+outputs:
+  quality-gate-status:
+    description: 'Quality gate status (PASSED/FAILED/UNKNOWN)'
+    value: ${{ steps.parse-results.outputs.quality-gate-status }}
+  bugs-count:
+    description: 'Number of bugs found'
+    value: ${{ steps.parse-results.outputs.bugs-count }}
+  vulnerabilities-count:
+    description: 'Number of vulnerabilities found'
+    value: ${{ steps.parse-results.outputs.vulnerabilities-count }}
+  security-rating:
+    description: 'Security rating (A-E)'
+    value: ${{ steps.parse-results.outputs.security-rating }}
+  reliability-rating:
+    description: 'Reliability rating (A-E)'
+    value: ${{ steps.parse-results.outputs.reliability-rating }}
+  maintainability-rating:
+    description: 'Maintainability rating (A-E)'
+    value: ${{ steps.parse-results.outputs.maintainability-rating }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install jq for JSON parsing
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y jq
+        
+    - name: Parse quality results
+      id: parse-results
+      shell: bash
+      run: |
+        if [ ! -f "${{ inputs.results-file }}" ]; then
+          echo "⚠️ Quality results file not found: ${{ inputs.results-file }}"
+          echo "quality-gate-status=UNKNOWN" >> $GITHUB_OUTPUT
+          echo "bugs-count=N/A" >> $GITHUB_OUTPUT
+          echo "vulnerabilities-count=N/A" >> $GITHUB_OUTPUT
+          echo "security-rating=N/A" >> $GITHUB_OUTPUT
+          echo "reliability-rating=N/A" >> $GITHUB_OUTPUT
+          echo "maintainability-rating=N/A" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+        
+        echo "📄 Parsing quality results from: ${{ inputs.results-file }}"
+        
+        # Extract quality gate status and metrics
+        QG_STATUS=$(jq -r '.quality_gate.status // "UNKNOWN"' ${{ inputs.results-file }} 2>/dev/null || echo "UNKNOWN")
+        BUGS=$(jq -r '.metrics.bugs // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+        VULNS=$(jq -r '.metrics.vulnerabilities // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+        SECURITY_RATING=$(jq -r '.metrics.ratings.security // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+        RELIABILITY_RATING=$(jq -r '.metrics.ratings.reliability // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+        MAINTAINABILITY_RATING=$(jq -r '.metrics.ratings.maintainability // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+        
+        echo "quality-gate-status=$QG_STATUS" >> $GITHUB_OUTPUT
+        echo "bugs-count=$BUGS" >> $GITHUB_OUTPUT
+        echo "vulnerabilities-count=$VULNS" >> $GITHUB_OUTPUT
+        echo "security-rating=$SECURITY_RATING" >> $GITHUB_OUTPUT
+        echo "reliability-rating=$RELIABILITY_RATING" >> $GITHUB_OUTPUT
+        echo "maintainability-rating=$MAINTAINABILITY_RATING" >> $GITHUB_OUTPUT
+        
+        echo "📊 Quality metrics - Status: $QG_STATUS, Bugs: $BUGS, Vulnerabilities: $VULNS"
+        
+    - name: Generate quality summary
+      shell: bash
+      run: |
+        QG_STATUS="${{ steps.parse-results.outputs.quality-gate-status }}"
+        BUGS="${{ steps.parse-results.outputs.bugs-count }}"
+        VULNS="${{ steps.parse-results.outputs.vulnerabilities-count }}"
+        SECURITY_RATING="${{ steps.parse-results.outputs.security-rating }}"
+        RELIABILITY_RATING="${{ steps.parse-results.outputs.reliability-rating }}"
+        MAINTAINABILITY_RATING="${{ steps.parse-results.outputs.maintainability-rating }}"
+        
+        # Determine status icon and message
+        if [ "$QG_STATUS" = "PASSED" ] || [ "$QG_STATUS" = "OK" ]; then
+          QG_ICON="✅"
+          QG_MESSAGE="**PASSED**"
+        elif [ "$QG_STATUS" = "FAILED" ] || [ "$QG_STATUS" = "ERROR" ]; then
+          QG_ICON="❌"
+          QG_MESSAGE="**FAILED**"
+        else
+          QG_ICON="❓"
+          QG_MESSAGE="**UNKNOWN**"
+        fi
+        
+        # Generate quality summary
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ${{ inputs.summary-title }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Metric | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Quality Gate | $QG_ICON $QG_MESSAGE |" >> $GITHUB_STEP_SUMMARY
+        echo "| Project | ${{ inputs.project-key }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Branch | ${{ inputs.branch-name }} |" >> $GITHUB_STEP_SUMMARY
+        
+        # Create branch-specific dashboard URL
+        if [ "${{ inputs.branch-name }}" = "main" ]; then
+          DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${{ inputs.project-key }}"
+        else
+          DASHBOARD_URL="https://sonarcloud.io/summary/overall?id=${{ inputs.project-key }}&branch=${{ inputs.branch-name }}"
+        fi
+        
+        echo "| Dashboard | [View Analysis Results]($DASHBOARD_URL) |" >> $GITHUB_STEP_SUMMARY
+        
+        # Add detailed metrics if available
+        if [ "$BUGS" != "N/A" ] && [ "$VULNS" != "N/A" ]; then
+          # Parse additional metrics from results file
+          HOTSPOTS=$(jq -r '.metrics.security_hotspots // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+          CODE_SMELLS=$(jq -r '.metrics.code_smells // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+          COVERAGE=$(jq -r '.metrics.coverage // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+          DUPLICATED_LINES=$(jq -r '.metrics.duplicated_lines_density // "N/A"' ${{ inputs.results-file }} 2>/dev/null || echo "N/A")
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Detailed Quality Metrics:**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | Rating |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐛 Bugs | $BUGS | 🏆 **${RELIABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔒 Vulnerabilities | $VULNS | 🛡️ **${SECURITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔥 Security Hotspots | $HOTSPOTS | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💨 Code Smells | $CODE_SMELLS | 🧹 **${MAINTAINABILITY_RATING}** |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$COVERAGE" != "N/A" ]; then
+            echo "| 📊 Test Coverage | ${COVERAGE}% | - |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "$DUPLICATED_LINES" != "N/A" ]; then
+            echo "| 📋 Code Duplication | ${DUPLICATED_LINES}% | - |" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi

@@ -1,0 +1,36 @@
+name: 'Download Build Artifacts'
+description: 'Downloads build artifacts with standard naming and path structure'
+inputs:
+  artifact-name:
+    description: 'Name of the artifact to download'
+    required: false
+    default: 'build-artifacts'
+  download-path:
+    description: 'Path where to extract the artifacts'
+    required: false
+    default: '.'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.download-path }}
+        
+    - name: Verify artifact structure
+      shell: bash
+      run: |
+        echo "📁 Verifying downloaded artifact structure..."
+        echo "Download path: ${{ inputs.download-path }}"
+        ls -la ${{ inputs.download-path }}/ || echo "⚠️ Download path not found or empty"
+        
+        # Check for microservice-moc-app directory structure
+        if [ -d "${{ inputs.download-path }}/microservice-moc-app" ]; then
+          echo "✅ Microservice application directory found"
+          echo "📊 Application structure:"
+          ls -la ${{ inputs.download-path }}/microservice-moc-app/
+        else
+          echo "⚠️ Expected microservice-moc-app directory not found"
+        fi

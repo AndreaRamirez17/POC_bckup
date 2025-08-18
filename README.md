@@ -4,35 +4,87 @@ A proof of concept implementation for a modern CI/CD security gating platform th
 
 ## Overview
 
-This PoC demonstrates an end-to-end security gating solution that:
+This PoC demonstrates an end-to-end security and quality gating solution that:
 
 - **Scans** code for vulnerabilities using Snyk
-- **Evaluates** security policies using Permit.io Policy Decision Point (PDP)
-- **Enforces** gates in CI/CD pipelines via GitHub Actions
+- **Analyzes** code quality and security using SonarQube Cloud
+- **Evaluates** security and quality policies using Permit.io Policy Decision Point (PDP)
+- **Enforces** combined gates in CI/CD pipelines via GitHub Actions
 - **Supports** both hard gates (blocking) and soft gates (warning)
+- **Provides** comprehensive quality ratings (Security: A, Reliability: A, Maintainability: A)
 
 ## Architecture
+
+### High-Level Architecture
 
 ```
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
 │  GitHub Actions │────▶│ Snyk Scanner │────▶│ Vulnerability   │
 │    Pipeline     │     │              │     │     Data        │
-└─────────────────┘     └──────────────┘     └────────┬────────┘
-                                                       │
-                                                       ▼
+└─────────┬───────┘     └──────────────┘     └────────┬────────┘
+          │                                           │
+          ▼                                           │
+┌─────────────────┐     ┌──────────────┐              │
+│ SonarQube Cloud │────▶│ Quality Data │              │
+│    Analysis     │     │ • Bugs: 0    │              │
+│                 │     │ • Security: A│              │
+│                 │     │ • Reliability│              │
+│                 │     │ • Coverage   │              │
+└─────────────────┘     └──────┬───────┘              │
+                               │                      │
+                               ▼                      ▼
 ┌─────────────────┐     ┌──────────────┐     ┌─────────────────┐
 │ Gate Evaluation │◀────│  Permit.io   │◀────│  OPAL Data     │
 │     Script      │     │     PDP      │     │    Fetcher     │
+│ • Security Gate │     │              │     │                │
+│ • Quality Gate  │     │              │     │                │
 └─────────────────┘     └──────────────┘     └─────────────────┘
          │
          ▼
 ┌─────────────────┐
-│ Pipeline Result │
+│ Combined Result │
 │  - Pass         │
 │  - Warn         │
 │  - Fail         │
+│  - Override     │
 └─────────────────┘
 ```
+
+### GitHub Actions Workflow Architecture
+
+The CI/CD pipeline is available in two architectures:
+
+#### **Modular Architecture** (Recommended - Production Ready)
+```
+gating-pipeline-modular.yml (~270 lines)
+    ├── build-application.yml (reusable workflow)
+    ├── security-scanning.yml (reusable workflow)
+    ├── quality-analysis.yml (reusable workflow)
+    ├── docker-build.yml (reusable workflow)
+    └── security-gates (inline job)
+            └── deploy (inline job)
+
+Composite Actions:
+    ├── setup-java-maven (environment setup)
+    ├── download-build-artifacts (artifact management)
+    ├── generate-security-summary (Snyk reporting)
+    └── generate-quality-summary (SonarQube reporting)
+```
+
+**Benefits:**
+- 73% reduction in main workflow size
+- Highly reusable components
+- Easier maintenance and testing
+- Clear separation of concerns
+- Better parallelization
+
+#### **Monolithic Architecture** (Reference Only)
+```
+gating-pipeline-monolithic.yml (991 lines)
+    └── All jobs and steps in single file
+```
+
+For detailed workflow documentation, see [.github/workflows/README.md](.github/workflows/README.md)
 
 ## Components
 
@@ -45,7 +97,20 @@ This PoC demonstrates an end-to-end security gating solution that:
   - **High**: Commons Collections 3.2.1 (CVE-2015-6420)
   - **Medium**: Jackson Databind 2.9.10.1
 
-### 2. Docker Compose Infrastructure
+### 2. SonarQube Cloud Integration
+
+- **Location**: `/sonarqube-cloud-scanning`
+- **Purpose**: Code quality and security analysis with comprehensive metrics
+- **Quality Gates**: Pass/Fail criteria based on configurable thresholds
+- **Metrics Tracked**:
+  - **Security Rating**: A (no vulnerabilities)
+  - **Reliability Rating**: A (no bugs) 
+  - **Maintainability Rating**: A (no code smells)
+  - **Test Coverage**: 25% with JaCoCo integration
+  - **Code Duplication**: 0% duplication detected
+- **Integration**: Maven plugin with automatic CI/CD analysis
+
+### 3. Docker Compose Infrastructure
 
 - **Permit.io PDP**: Policy Decision Point for gate evaluation
 - **OPAL Server**: Manages policy updates and data synchronization
@@ -53,26 +118,41 @@ This PoC demonstrates an end-to-end security gating solution that:
 - **Redis**: Message broker for OPAL pub/sub
 - **Spring App**: The mock application being tested
 
-### 3. Security Policies & Role-Based Access
+### 4. Security Policies & Role-Based Access
 
 - **Hard Gate**: Fails pipeline on critical vulnerabilities
 - **Soft Gate**: Warns on high severity vulnerabilities
 - **Info Gate**: Provides information on medium severity issues
+- **Quality Gate**: Evaluates code quality metrics and ratings
 - **Editor Override**: Allows authorized users to bypass security gates with full audit trail
 - **Role-Based Permissions**: Different access levels (ci-pipeline, editor) with appropriate permissions
 
-### 4. Gate Evaluation Scripts (`permit-gating/scripts/`)
+### 5. Gate Evaluation Scripts (`permit-gating/scripts/`)
 
 - **evaluate-gates.sh**: Main security gate evaluation script with role-based override support
 - **test-gates-local.sh**: Local testing utility for full pipeline simulation
 - **validate-permit.sh**: Permit.io configuration validation script
 - **Enhanced .env Configuration**: Flexible user role and key management
 
-### 5. GitHub Actions Workflow
+### 6. SonarQube Analysis Scripts (`sonarqube-cloud-scanning/scripts/`)
 
-- Builds and scans the application
-- Evaluates security gates with role-based access
-- Makes deployment decisions based on gate results and user permissions
+- **validate-sonarqube.sh**: SonarQube Cloud configuration validation
+- **analyze-quality-gates.sh**: Quality gate analysis and metrics extraction
+- **test-sonarqube-local.sh**: Local SonarQube testing utility
+
+### 7. GitHub Actions Workflows
+
+#### Available Workflows:
+- **`gating-pipeline-modular.yml`** - Production-ready modular pipeline using reusable workflows
+- **`gating-pipeline-monolithic.yml`** - Original single-file implementation (reference only)
+- **`ci-pipeline.yml`** - Simple CI demo workflow
+
+#### Key Features:
+- Builds and scans the application with both Snyk and SonarQube
+- Evaluates combined security and quality gates with role-based access
+- Makes deployment decisions based on both gate results and user permissions
+- Displays comprehensive metrics including A/A/A quality ratings
+- Supports reusable workflows and composite actions for maintainability
 
 ## Prerequisites
 
@@ -82,6 +162,7 @@ This PoC demonstrates an end-to-end security gating solution that:
 - Git
 - **Permit.io account and API key** ([Configuration Guide](CONFIGURATION_GUIDE.md))
 - **Snyk account and API token** ([Configuration Guide](CONFIGURATION_GUIDE.md))
+- **SonarQube Cloud account and token** ([SonarQube Setup Guide](sonarqube-cloud-scanning/docs/SETUP_GUIDE.md))
 - **OPA CLI** (Optional - automatically installed for policy validation)
 
 ## Quick Start
@@ -121,19 +202,29 @@ chmod +x snyk-scanning/scripts/validate-snyk.sh
 chmod +x permit-gating/scripts/validate-permit.sh  
 ./permit-gating/scripts/validate-permit.sh
 
+chmod +x sonarqube-cloud-scanning/scripts/validate-sonarqube.sh
+./sonarqube-cloud-scanning/scripts/validate-sonarqube.sh
+
 # Note: The validate-permit.sh script will automatically install OPA CLI if needed
 # for policy syntax validation. You can skip the installation when prompted if
 # you don't need syntax checking (the policies will still work with Permit.io PDP)
 ```
 
-### 3. Run Local Test
+### 3. Run Local Tests
 
+**Security Gates Test:**
 ```bash
 chmod +x permit-gating/scripts/test-gates-local.sh
 ./permit-gating/scripts/test-gates-local.sh
 ```
 
-Select option 1 for a full test run.
+**SonarQube Quality Gates Test:**
+```bash
+chmod +x sonarqube-cloud-scanning/scripts/test-sonarqube-local.sh
+./sonarqube-cloud-scanning/scripts/test-sonarqube-local.sh
+```
+
+Select option 1 for a full test run in both cases.
 
 ## Manual Testing
 
@@ -143,8 +234,9 @@ Select option 1 for a full test run.
 docker-compose up -d
 ```
 
-### Run Snyk Scan
+### Run Security Scans
 
+**Snyk Vulnerability Scan:**
 ```bash
 cd microservice-moc-app
 mvn clean compile
@@ -152,19 +244,43 @@ snyk test --json > ../snyk-scanning/results/snyk-results.json
 cd ..
 ```
 
+**SonarQube Quality Analysis:**
+```bash
+cd microservice-moc-app
+mvn clean test sonar:sonar
+cd ..
+```
+
 ### Evaluate Gates
 
+**Security Gates:**
 ```bash
 ./permit-gating/scripts/evaluate-gates.sh snyk-scanning/results/snyk-results.json
 ```
 
+**Quality Gates:**
+```bash
+./sonarqube-cloud-scanning/scripts/analyze-quality-gates.sh -k poc-pipeline_poc-pipeline -o sonarqube-cloud-scanning/results/quality-gate-result.json
+```
+
 ### Expected Results
 
+**Security Scan Results:**
 With the included vulnerable dependencies, you should see:
 
 - **Hard Gate**: FAIL (due to critical Log4j vulnerability)
 - **Soft Gate**: WARN (due to high severity Commons Collections vulnerability)
 - **Info**: Medium severity Jackson Databind vulnerability
+
+**Quality Analysis Results:**
+With the current clean codebase, you should see:
+
+- **Quality Gate**: PASS ✅
+- **Security Rating**: A (no vulnerabilities)
+- **Reliability Rating**: A (no bugs) 
+- **Maintainability Rating**: A (no code smells)
+- **Test Coverage**: 25% with JaCoCo integration
+- **Code Duplication**: 0%
 
 ### Editor Override Testing
 
@@ -196,6 +312,9 @@ Go to Settings → Secrets and add:
 - `PERMIT_API_KEY`: Your Permit.io API key
 - `SNYK_TOKEN`: Your Snyk authentication token
 - `SNYK_ORG_ID`: Your Snyk organization ID
+- `SONAR_TOKEN`: Your SonarQube Cloud authentication token
+- `SONAR_ORGANIZATION`: Your SonarQube Cloud organization key
+- `SONAR_PROJECT_KEY`: Your SonarQube Cloud project key
 
 ### 2. Push Code
 
@@ -209,8 +328,10 @@ The pipeline will automatically trigger on:
 
 Check the Actions tab to see:
 
-- Build and scan results
-- Gate evaluation outcomes
+- Build and scan results (Snyk + SonarQube)
+- Security and quality gate evaluation outcomes
+- Combined gate decision matrix
+- Comprehensive quality ratings (A/A/A)
 - Deployment status
 
 ## Gate Scenarios
@@ -218,35 +339,52 @@ Check the Actions tab to see:
 ### Scenario 1: Critical Vulnerability (Hard Gate)
 
 **Setup**: Application includes Log4j 2.14.1
-**Result**: Pipeline FAILS and deployment is blocked
+**Security Result**: FAIL - Pipeline blocked
+**Quality Result**: PASS (A/A/A ratings)
+**Combined Result**: BLOCKED 
 **Message**: "Critical vulnerabilities must be resolved before deployment"
 
-### Scenario 2: High Severity (Soft Gate)
+### Scenario 2: High Severity (Soft Gate) + Quality Issues
 
-**Setup**: Remove critical vulnerabilities, keep high severity ones
-**Result**: Pipeline PASSES with warnings
-**Message**: "High severity vulnerabilities detected. Review recommended"
+**Setup**: Remove critical vulnerabilities, keep high severity ones + introduce code smells
+**Security Result**: WARN - High severity detected
+**Quality Result**: FAIL - Maintainability below threshold
+**Combined Result**: BLOCKED
+**Message**: "Quality gate failed - address code quality issues"
 
-### Scenario 3: Clean Build
+### Scenario 3: Clean Build (Both Gates Pass)
 
-**Setup**: Update all dependencies to secure versions
-**Result**: Pipeline PASSES
-**Message**: "All security gates passed"
+**Setup**: Update all dependencies to secure versions + clean code
+**Security Result**: PASS - No vulnerabilities
+**Quality Result**: PASS (A/A/A ratings)
+**Combined Result**: DEPLOY
+**Message**: "All security and quality gates passed"
 
-### Scenario 4: Editor Override (Security Gate Bypass)
+### Scenario 4: Quality Pass + Security Warning
+
+**Setup**: High severity vulnerabilities + clean code
+**Security Result**: WARN - High severity detected
+**Quality Result**: PASS (A/A/A ratings)
+**Combined Result**: REVIEW & DEPLOY
+**Message**: "Quality gates passed, security review recommended"
+
+### Scenario 5: Editor Override (Security Gate Bypass)
 
 **Setup**: Configure editor role in .env and run with critical vulnerabilities
-**Result**: Pipeline PASSES with override warning
+**Security Result**: OVERRIDE - Editor privileges
+**Quality Result**: PASS (A/A/A ratings)
+**Combined Result**: DEPLOY WITH AUDIT
 **Message**: "EDITOR OVERRIDE - Deployment allowed with editor privileges"
 **Details**:
 
 - Shows clear audit trail of who overrode the gates
 - Lists all critical vulnerabilities being overridden
+- Quality metrics still evaluated and displayed
 - Provides recommendations for post-deployment remediation
 
 ## Customization
 
-### Adding New Gates
+### Adding New Security Gates
 
 Edit `permit-gating/policies/gating_policy.rego` to add custom rules:
 
@@ -256,7 +394,7 @@ custom_gate_fail if {
 }
 ```
 
-### Modifying Thresholds
+### Modifying Security Thresholds
 
 Update the policy rules in `gating_policy.rego`:
 
@@ -266,9 +404,38 @@ hard_gate_fail if {
 }
 ```
 
+### Customizing SonarQube Quality Gates
+
+Modify quality gate thresholds in SonarQube Cloud:
+
+1. Go to **Quality Gates** in your SonarQube Cloud project
+2. Edit conditions for:
+   - **Coverage**: Minimum % coverage required
+   - **Duplicated Lines**: Maximum % duplication allowed
+   - **Maintainability Rating**: Acceptable rating (A-E)
+   - **Reliability Rating**: Acceptable rating (A-E)
+   - **Security Rating**: Acceptable rating (A-E)
+
 ### Adding Data Sources
 
 Extend the OPAL fetcher in `/opal-fetcher/main.py` to integrate additional security tools.
+
+### SonarQube Project Configuration
+
+Edit `sonarqube-cloud-scanning/config/sonar-project.properties`:
+
+```properties
+# Quality Gate Settings
+sonar.qualitygate.wait=true
+sonar.qualitygate.timeout=300
+
+# Coverage Settings
+sonar.coverage.exclusions=**/test/**,**/mock/**
+
+# Analysis Settings
+sonar.projectName=Your Custom Project Name
+sonar.projectVersion=1.0.0
+```
 
 ## Audit Logging
 
@@ -457,9 +624,20 @@ curl -sf https://api.permit.io/v2/projects -H "Authorization: Bearer $PERMIT_API
 ```
 cicd-pipeline-poc/
 ├── .github/
-│   └── workflows/
-│       └── gating-pipeline.yml      # GitHub Actions workflow
-├── permit-gating/                         # Security gating components
+│   ├── workflows/
+│   │   ├── gating-pipeline-modular.yml     # Modular pipeline (production)
+│   │   ├── gating-pipeline-monolithic.yml  # Original pipeline (reference)
+│   │   ├── build-application.yml           # Reusable build workflow
+│   │   ├── security-scanning.yml           # Reusable security workflow
+│   │   ├── quality-analysis.yml            # Reusable quality workflow
+│   │   ├── docker-build.yml                # Reusable Docker workflow
+│   │   └── ci-pipeline.yml                 # Simple CI demo
+│   └── actions/
+│       ├── setup-java-maven/               # Composite action for Java setup
+│       ├── download-build-artifacts/       # Composite action for artifacts
+│       ├── generate-security-summary/      # Composite action for Snyk reports
+│       └── generate-quality-summary/       # Composite action for SonarQube
+├── permit-gating/                   # Security gating components
 │   ├── docs/                       # Gating documentation
 │   │   ├── README.md               # Gating setup guide
 │   │   └── PERMIT_IO_GATING_BRD.md # Business requirements
@@ -478,15 +656,30 @@ cicd-pipeline-poc/
 │   │   └── gating-pipeline.yml     # Gating pipeline workflow
 │   └── docker/                     # Docker configurations
 │       └── docker-compose.gating.yml # Gating services
+├── sonarqube-cloud-scanning/        # SonarQube Cloud integration
+│   ├── config/                     # SonarQube configuration
+│   │   └── sonar-project.properties # Project settings
+│   ├── scripts/                    # Analysis scripts
+│   │   ├── validate-sonarqube.sh   # Configuration validation
+│   │   ├── analyze-quality-gates.sh # Quality gate analysis
+│   │   └── test-sonarqube-local.sh # Local testing script
+│   ├── results/                    # Analysis results
+│   │   └── quality-gate-result.json # Quality metrics & ratings
+│   └── docs/                       # SonarQube documentation
+│       ├── SETUP_GUIDE.md          # Setup instructions
+│       ├── INTEGRATION_GUIDE.md    # CI/CD integration
+│       └── TROUBLESHOOTING.md      # Common issues
 ├── microservice-moc-app/
 │   ├── src/                        # Spring Boot application source
-│   ├── pom.xml                     # Maven config with vulnerable deps
+│   ├── pom.xml                     # Maven config with SonarQube & JaCoCo
 │   └── Dockerfile                  # Application container
-├── scripts/
-│   └── validate-snyk.sh            # Snyk validation script
+├── snyk-scanning/                   # Snyk security scanning
+│   ├── scripts/
+│   │   └── validate-snyk.sh        # Snyk validation script
+│   └── results/                    # Vulnerability scan results
 ├── docker-compose.yml              # Main infrastructure definition
 ├── .env                            # Environment configuration
-└── README.md                       # This file
+└── README.md                       # This file (updated with SonarQube)
 ```
 
 ## Next Steps
@@ -494,11 +687,13 @@ cicd-pipeline-poc/
 After validating this PoC:
 
 1. **Production Deployment**: Deploy PDP to Kubernetes for high availability
-2. **GitOps Integration**: Implement policy-as-code workflow
-3. **Additional Gates**: Add SonarQube, BlackDuck, and other scanners
-4. **Exception Handling**: Integrate with Jira for exception management
-5. **Reporting Dashboard**: Build visualization for gate metrics
-6. **Maker-Checker Workflow**: Implement approval process for policy changes
+2. **GitOps Integration**: Implement policy-as-code workflow  
+3. **Additional Security Scanners**: Add BlackDuck, Checkmarx, and other tools
+4. **Advanced Quality Gates**: Implement custom SonarQube quality profiles
+5. **Exception Handling**: Integrate with Jira for exception management
+6. **Reporting Dashboard**: Build visualization for combined security and quality metrics
+7. **Maker-Checker Workflow**: Implement approval process for policy changes
+8. **Multi-Branch Support**: Enhance SonarQube PR decoration and branch analysis
 
 ## Support
 
@@ -506,10 +701,14 @@ For issues or questions:
 
 - **Start here**: [Configuration Guide](CONFIGURATION_GUIDE.md) for setup help
 - **Security Gating**: [Gating Documentation](permit-gating/docs/README.md) for gating-specific setup
+- **SonarQube Integration**: [SonarQube Setup Guide](sonarqube-cloud-scanning/docs/SETUP_GUIDE.md) for quality gate configuration
 - Review the [Business Requirements Document](permit-gating/docs/PERMIT_IO_GATING_BRD.md)  
 - Check service logs: `docker-compose logs`
 - Enable debug mode: `DEBUG=true ./permit-gating/scripts/evaluate-gates.sh`
-- Validate your setup: `./snyk-scanning/scripts/validate-snyk.sh` and `./permit-gating/scripts/validate-permit.sh`
+- Validate your setup: 
+  - `./snyk-scanning/scripts/validate-snyk.sh`
+  - `./permit-gating/scripts/validate-permit.sh`
+  - `./sonarqube-cloud-scanning/scripts/validate-sonarqube.sh`
 
 ## License
 

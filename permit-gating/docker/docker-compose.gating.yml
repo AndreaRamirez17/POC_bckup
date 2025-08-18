@@ -1,90 +1,119 @@
 version: '3.8'
 
 services:
-  # Permit.io Policy Decision Point (PDP)
+  # Permit.io Policy Decision Point (PDP) - Safe Deployment Gate Configuration
   permit-pdp:
     image: permitio/pdp-v2:latest
     container_name: permit-pdp
     ports:
-      - "7766:7000"
-      - "7001:7001"
+      - "7766:7000"  # Main API port for authorization requests
+      - "7001:7001"  # Health check and admin port
     environment:
-      - PDP_API_KEY=${PERMIT_API_KEY}
-      - PDP_DEBUG=true
-      - PDP_LOG_LEVEL=DEBUG
-      - PDP_AUDIT_LOG_ENABLED=true
-      - PDP_AUDIT_LOG_LEVEL=info
-      - PDP_DECISION_LOG_ENABLED=true
+      # Core PDP Configuration
+      - PDP_API_KEY=${PERMIT_API_KEY}    # Required: Permit.io API key for cloud sync
+      
+      # Safe Deployment Gate Specific Settings
+      - PDP_DEBUG=true                   # Enable debug logging for Safe Deployment Gate
+      - PDP_LOG_LEVEL=INFO               # Optimized log level (was DEBUG)
+      
+      # Audit and Decision Logging (Required for compliance)
+      - PDP_AUDIT_LOG_ENABLED=true       # Enable audit logs for override tracking
+      - PDP_DECISION_LOG_ENABLED=true    # Enable decision logs for all gate evaluations
+      - PDP_AUDIT_LOG_LEVEL=info         # Audit log verbosity
+      
+      # Performance Optimizations
+      - PDP_POLICY_UPDATER_ENABLED=true  # Enable cloud policy sync
+      - PDP_POLICY_UPDATER_INTERVAL=30   # Sync every 30 seconds
+      - PDP_DATA_UPDATER_ENABLED=false   # Disable data updater (not needed for Safe Deployment Gate)
+    
+    # Note: policies volume is for reference only - actual policies managed by Permit.io cloud
+    volumes:
+      - ../policies:/app/policies:ro     # Reference policies and documentation
+    
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7766/healthy"]
-      interval: 15s
-      timeout: 10s
-      retries: 8
-      start_period: 60s
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:7001/healthy"]
+      interval: 10s                      # Optimized from 15s
+      timeout: 5s                        # Optimized from 10s
+      retries: 6                         # Optimized from 8
+      start_period: 30s                  # Optimized from 60s
+    
     networks:
       - gating-network
     restart: unless-stopped
 
-  # OPAL Server (for custom data fetchers)
-  opal-server:
-    image: permitio/opal-server:latest
-    container_name: opal-server
-    ports:
-      - "7002:7002"
-    environment:
-      - OPAL_LOG_LEVEL=DEBUG
-      - OPAL_BROADCAST_URI=redis://redis:6379
-      - OPAL_POLICY_REPO_URL=${OPAL_POLICY_REPO_URL:-}
-      - OPAL_POLICY_REPO_POLLING_INTERVAL=30
-      - OPAL_DATA_UPDATER_ENABLED=false
-    depends_on:
-      - redis
-    networks:
-      - gating-network
-    restart: unless-stopped
+  # OPAL Server (Optional - for advanced data synchronization)
+  # NOTE: Not required for basic Safe Deployment Gate functionality
+  # Uncomment if you need custom data fetchers or advanced policy sync
+  # opal-server:
+  #   image: permitio/opal-server:latest
+  #   container_name: opal-server
+  #   ports:
+  #     - "7002:7002"
+  #   environment:
+  #     - OPAL_LOG_LEVEL=INFO
+  #     - OPAL_BROADCAST_URI=redis://redis:6379
+  #     - OPAL_POLICY_REPO_URL=${OPAL_POLICY_REPO_URL:-}
+  #     - OPAL_POLICY_REPO_POLLING_INTERVAL=30
+  #     - OPAL_DATA_UPDATER_ENABLED=false
+  #   depends_on:
+  #     - redis
+  #   networks:
+  #     - gating-network
+  #   restart: unless-stopped
+  #   profiles: ["advanced"]  # Only start with docker-compose --profile advanced
 
-  # Redis for OPAL pub/sub
-  redis:
-    image: redis:7-alpine
-    container_name: redis
-    ports:
-      - "6379:6379"
-    networks:
-      - gating-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+  # Redis (Optional - only needed if using OPAL Server)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: redis
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - gating-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+  #   profiles: ["advanced"]  # Only start with docker-compose --profile advanced
 
-  # Custom OPAL Data Fetcher for Snyk
-  opal-fetcher:
-    build:
-      context: ../opal-fetcher
-      dockerfile: Dockerfile
-    container_name: opal-fetcher
-    ports:
-      - "8000:8000"
-    environment:
-      - SNYK_TOKEN=${SNYK_TOKEN}
-      - SNYK_ORG_ID=${SNYK_ORG_ID}
-      - SNYK_PROJECT_ID=${SNYK_PROJECT_ID}
-      - LOG_LEVEL=DEBUG
-    networks:
-      - gating-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # Custom OPAL Data Fetcher for Snyk (Optional)
+  # NOTE: Safe Deployment Gate uses vulnerability data directly from Snyk scan results
+  # This fetcher is not required for standard operation
+  # opal-fetcher:
+  #   build:
+  #     context: ../opal-fetcher
+  #     dockerfile: Dockerfile
+  #   container_name: opal-fetcher
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     - SNYK_TOKEN=${SNYK_TOKEN}
+  #     - SNYK_ORG_ID=${SNYK_ORG_ID}
+  #     - SNYK_PROJECT_ID=${SNYK_PROJECT_ID}
+  #     - LOG_LEVEL=INFO
+  #   networks:
+  #     - gating-network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   profiles: ["advanced"]  # Only start with docker-compose --profile advanced
 
 networks:
   gating-network:
     driver: bridge
     name: gating-network
+    # Optimized network configuration for Safe Deployment Gate
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
 
-volumes:
-  maven-cache:
-    name: maven-cache
+# Note: maven-cache volume removed as it's not used in this gating-specific compose file
+# Maven caching should be handled in the main application docker-compose.yml
