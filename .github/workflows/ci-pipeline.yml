@@ -71,7 +71,8 @@ jobs:
           # Build without run the tests. The test will be executed in the next step
           mvn clean package -DskipTests
           JAR_NAME=$(ls target/*.jar | head -n 1 | xargs -n 1 basename )
-          echo "jar_name=$JAR_NAME >> $GITHUB_OUTPUT"
+          # Correctly export jar name to job outputs
+          echo "jar_name=$JAR_NAME" >> $GITHUB_OUTPUT
           echo "Discoverd JAR name: $JAR_NAME"
 
       - name: Execute Unit Tests
@@ -129,9 +130,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: test_and_build
     env:    
-      DOCKER_USER_NAME: ${{secrets.DOCKER_USER_NAME}}
-      DOCKER_USER_TOKEN: ${{secrets.DOCKER_USER_TOKEN}}
-      DOCKER_TAG: ${{ steps.get-tag-name.outputs.docker_tag }}
+      DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
+      DOCKER_USER_TOKEN: ${{ secrets.POC_DOCKER_TOKEN }}
+      # Use the job output exported by the producing job. Can't reference other-job 'steps'.
+      DOCKER_TAG: "${{ needs.test_and_build.outputs.docker_image_tag }}"
 
 
     steps:
@@ -139,8 +141,8 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: docker.io. # ( If uses docker.io as registry this attribute is optional)
-          username: ${{ secrets.POC_DOCKER_USERNAME }}
-          password: ${{ secrets.POC_DOCKER_TOKEN }}
+          username: ${{ env.DOCKER_USER_NAME }}
+          password: ${{ env.DOCKER_USER_TOKEN }}
 
       - name: Download Docker Image Tarball
         uses: actions/download-artifact@v4
