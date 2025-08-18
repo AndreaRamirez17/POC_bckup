@@ -181,35 +181,26 @@ jobs:
       - name: Deploy container application on Development Host
         uses: appleboy/ssh-action@v1.0.3
         env:
-          DOCKER_USER_NAME: ${{env.DOCKER_USER_NAME}}
-          DOCKER_TAG: ${{env.DOCKER_TAG}}
-
+          REGISTRY: ${{env.DOCKER_USER_NAME}}
+          IMAGE: ${{env.DOCKER_TAG}}
         with:
           host: ${{env.DEVELOPMENT_HOST}}
           username: ${{env.DEVELOPMENT_USERNAME}}
           key: ${{env.DEVELOPMENT_KEY}}
           port: ${{env.DEVELOPMENT_PORT}}
-          envs: DOCKER_USER_NAME, DOCKER_TAG
+          envs: REGISTRY,IMAGE
           script: |
             id_list=$(docker ps -aq)
             if [ -z "$id_list" ]; then
               echo "No containers are running righ now"
             else
               docker rm -f "$id_list"
-            fi  
-            
-            echo "Pull docker image"
-            docker pull $DOCKER_USER_NAME/$DOCKER_TAG
+            fi
 
-            echo "verify docker images"
+            echo "getting image from $REGISTRY/$IMAGE"            
+            docker pull $REGISTRY/$IMAGE
             docker images
-
-            echo "run container"
-            docker container run -d -p 8080:8080 --name web ${DOCKER_USER_NAME}/$DOCKER_TAG
-
-            echo "pause 2 seconds"
+            docker container run -d -p 8080:8080 --name web $REGISTRY/$IMAGE
             sleep 2
-
-            echo "verify container"
             docker ps -a
 
