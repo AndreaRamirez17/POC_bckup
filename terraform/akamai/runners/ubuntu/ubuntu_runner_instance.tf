@@ -11,10 +11,10 @@ provider "linode" {
 }
 
 # linode
-resource "linode_instance" "poc-runner" {
+resource "linode_instance" "poc-ubuntu-runner-instance" {
   region         = var.region
   image          = var.image
-  #stackscript_id = var.stackscript_id
+  stackscript_id = var.stackscript_id
   type           = var.instance_type
   label          = var.instance_label
   tags           = var.instance_tags
@@ -24,9 +24,9 @@ resource "linode_instance" "poc-runner" {
 
   # Add user_data for StackScript UDF fields
   # Add other UDF fields as needed by your StackScript
-  #stackscript_data = {
-  #  "user_name" = var.stackscript_username    
-  #}
+  stackscript_data = {
+    "user_name" = var.stackscript_username    
+  }
 
   provisioner "file" {
     source      = "./scripts/setup_ubuntu_instance.sh"
@@ -42,7 +42,7 @@ resource "linode_instance" "poc-runner" {
   provisioner "remote-exec" {
     inline = [
       "chmod +x /tmp/setup_ubuntu_instance.sh",
-      "/tmp/setup_ubuntu_instance.sh '${var.runner_name}' '${var.runner_pass}' ",
+      "/tmp/setup_ubuntu_instance.sh '${var.runner_username}' '${var.runner_userpass}' ",
       "sleep 1"
     ]
 
@@ -56,8 +56,8 @@ resource "linode_instance" "poc-runner" {
 }
 
 # firewall
-resource "linode_firewall" "runner_firewall" {
-  label = "runner_firewall_label"
+resource "linode_firewall" "poc-ubuntu-runner-firewall" {
+  label = "poc_ubuntu_runner_firewall"
   
   inbound {
     label    = "allow-ssh"
@@ -79,5 +79,5 @@ resource "linode_firewall" "runner_firewall" {
 
   inbound_policy  = "DROP"
   outbound_policy = "ACCEPT"
-  linodes         = [linode_instance.poc-runner.id]
+  linodes         = [linode_instance.poc-ubuntu-runner-instance.id]
 }

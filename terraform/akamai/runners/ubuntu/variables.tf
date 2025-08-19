@@ -11,15 +11,15 @@ variable "root_pass" {
   sensitive   = true
 }
 
-variable "runner_pass" {
+variable "runner_userpass" {
   type        = string
-  description = "Password for the developer user"
+  description = "Password for the runner user"
   sensitive   = true
 }
 
-variable "runner_name" {
+variable "runner_username" {
   type = string
-  description = "Developer username for the linode instance"
+  description = "Username for the linode instance runner"
   default = "developer"  
 }
 
@@ -38,7 +38,7 @@ variable "image" {
 variable "stackscript_username" {
     type = string
     description = "UDF username that execute the StackScript"
-    default = "demo"
+    default = "installer"
 }
 
 variable "stackscript_id" {

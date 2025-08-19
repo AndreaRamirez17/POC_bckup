@@ -1,10 +1,22 @@
 #!/bin/bash
 
-#This token is taken from environment or by argument
+if [ -z "$1" ]; then
+    echo "Error: Token not provided"
+    exit 1
+fi
 token=$1
 
-#
-github_accoutn=$2
+if [ -z "$2" ]; then
+    echo "Error: GitHub Account not provided"
+    exit 1
+fi
+github_account=$2
+
+if [ -z "$3" ]; then
+    echo "Error: Repository not provided"
+    exit 1
+fi
+repository=$3
 
 # Create the folder
 mkdir actions-runner && cd actions-runner 
@@ -21,29 +33,20 @@ tar xzf ./actions-runner-linux-x64-2.327.1.tar.gz
 
 ##################################################################################################################################
 ##################################################################################################################################
-# This part mus be fixed.. 
-# 1) To send the token, the github user, the proyect, and other parameters
-# 2) The argument to responde all argument to create the runner in ubuntu machine
-# 3) Only ond config option must be get.
+# Create the runner 
 
-# Create the runner and start the configuration experience
 ./config.sh \
---url https://github.com/$github_accoutn/$repository \
+--unattended \
+--url https://github.com/$github_account/$repository \
 --token $token \
---name ubuntu-runner-001
---labels self-hosted,linux
-
-./config.sh --url https://github.com/$github_accoutn/$repository --token $token
-
-
+--labels linode-ubuntu-runner-001
 
 ##################################################################################################################################
 ##################################################################################################################################
 
 # run it!
-./run.sh
+./run.sh &
 
-status=$(echo $?)
-
+status=$($?)
 echo "Final Status  $status"
 
