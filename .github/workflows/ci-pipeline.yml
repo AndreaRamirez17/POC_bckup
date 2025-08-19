@@ -16,7 +16,7 @@ jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
   test_and_build:
     #runs-on: ubuntu-latest
-    runs-on: ubuntu-linode-selfhosted
+    runs-on: linode-ubuntu01-selfhosted
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
@@ -127,7 +127,7 @@ jobs:
   # Job 2: Upload Docker imagaes to Registryes
   store_container_images:  
     #runs-on: ubuntu-latest
-    runs-on: ubuntu-linode-selfhosted
+    runs-on: linode-ubuntu01-selfhosted
     needs: test_and_build
     env:    
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
@@ -169,7 +169,7 @@ jobs:
   # Job 3: Deploy Container image on Cloud Virtual Machine
   deploy_on_dev_environment:
     #runs-on: ubuntu-latest
-    runs-on: ubuntu-linode-selfhosted
+    runs-on: linode-ubuntu01-selfhosted
     needs: store_container_images
     env:
       DEVELOPMENT_HOST: ${{ secrets.DEVELOPMENT_VM_HOST}}
