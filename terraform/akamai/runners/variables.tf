@@ -20,7 +20,7 @@ variable "runner_pass" {
 variable "runner_name" {
   type = string
   description = "Developer username for the linode instance"
-  default = "runner"  
+  default = "developer"  
 }
 
 variable "region" {

@@ -42,7 +42,7 @@ resource "linode_instance" "poc-runner" {
   provisioner "remote-exec" {
     inline = [
       "chmod +x /tmp/setup_ubuntu_instance.sh",
-      "/tmp/setup_script.sh '${var.runner_name}' '${var.runner_pass}' ",
+      "/tmp/setup_ubuntu_instance.sh '${var.runner_name}' '${var.runner_pass}' ",
       "sleep 1"
     ]
 
