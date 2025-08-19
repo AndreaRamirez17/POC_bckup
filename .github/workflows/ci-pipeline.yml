@@ -17,7 +17,7 @@ jobs:
   test_and_build:
     #runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: linode-rocky01-selfhosted
+    runs-on: self-hosted
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
@@ -129,7 +129,7 @@ jobs:
   store_container_images:  
     #runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: linode-rocky01-selfhosted
+    runs-on: self-hosted
     needs: test_and_build
     env:    
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
@@ -172,7 +172,7 @@ jobs:
   deploy_on_dev_environment:
     #runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: linode-rocky01-selfhosted
+    runs-on: self-hosted
     needs: store_container_images
     env:
       DEVELOPMENT_HOST: ${{ secrets.DEVELOPMENT_VM_HOST}}
