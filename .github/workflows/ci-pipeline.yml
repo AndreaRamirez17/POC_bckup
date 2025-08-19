@@ -185,12 +185,14 @@ jobs:
         env:
           REGISTRY: rmonteleo
           IMAGE: ${{env.DOCKER_TAG}}
+          PROJECT: ${{ env.PROJECT_NAME}}
+          GITHUB_SHA: ${{ github.sha }} 
         with:
           host: ${{env.DEVELOPMENT_HOST}}
           username: ${{env.DEVELOPMENT_USERNAME}}
           key: ${{env.DEVELOPMENT_KEY}}
           port: ${{env.DEVELOPMENT_PORT}}
-          envs: REGISTRY,IMAGE
+          envs: REGISTRY,IMAGE,PROJECT,GITHUB_SHA
           script: |
             id_list=$(docker ps -aq)
             if [ -z "$id_list" ]; then
@@ -200,10 +202,16 @@ jobs:
             fi
 
             echo "#### Registry $REGISTRY ####"
-            echo "#### Image $IMAGE #####"            
-            docker pull $REGISTRY/$IMAGE
+            echo "#### Image $IMAGE #####"
+            echo "#### PROJECT $PROJECT #####" 
+            echo "#### SHA  $GITHUB_SHA" 
+
+            CONTAINER_IMAGE="$REGISTRY/$PROJECT:$GITHUB_SHA"
+            echo "$CONTAINER_IMAGE"
+
+            docker pull $CONTAINER_IMAGE
             docker images
-            docker container run -d -p 8080:8080 --name web $REGISTRY/$IMAGE
+            docker container run -d -p 8080:8080 --name web $CONTAINER_IMAGE
             sleep 2
             docker ps -a
 
