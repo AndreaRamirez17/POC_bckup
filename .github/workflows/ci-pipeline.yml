@@ -1,4 +1,4 @@
-name: Pipe Line for Quick CI/CD Demo
+name: Pipeline for Quick CI Demo
 
 on:
   # To execute this pipeline needs to be clicked  
@@ -15,7 +15,9 @@ env:
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
   test_and_build:
-    runs-on: ubuntu-latest
+    #runs-on: ubuntu-latest
+    #runs-on: linode-ubuntu01-selfhosted
+    runs-on: rocky9
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
@@ -124,21 +126,22 @@ jobs:
           retention-days: 7
 
   # Job 2: Upload Docker imagaes to Registryes
-  store-container-images:  
-    runs-on: ubuntu-latest
+  store_container_images:  
+    #runs-on: ubuntu-latest
+    #runs-on: linode-ubuntu01-selfhosted
+    runs-on: rocky9
     needs: test_and_build
     env:    
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
       DOCKER_USER_TOKEN: ${{ secrets.POC_DOCKER_TOKEN }}
       # Use the job output exported by the producing job. Can't reference other-job 'steps'.
-      DOCKER_TAG: "${{ needs.test_and_build.outputs.docker_image_tag }}"
-
+      DOCKER_TAG: ${{ needs.test_and_build.outputs.docker_image_tag }}
 
     steps:
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
-          registry: docker.io. # ( If uses docker.io as registry this attribute is optional)
+          #registry: docker.io. # ( If uses docker.io as registry this attribute is optional)
           username: ${{ env.DOCKER_USER_NAME }}
           password: ${{ env.DOCKER_USER_TOKEN }}
 
@@ -158,11 +161,60 @@ jobs:
         run: |
           echo "Tagging docker image, current one is ${{ env.DOCKER_TAG }}"
           docker tag ${{ env.DOCKER_TAG}} ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
+          docker images
           
       - name: Push Docker Image
         run: |
           echo "Push docker image"
           docker push ${{env.DOCKER_USER_NAME}}/${{env.DOCKER_TAG}}
 
+  # Job 3: Deploy Container image on Cloud Virtual Machine
+  deploy_on_dev_environment:
+    #runs-on: ubuntu-latest
+    #runs-on: linode-ubuntu01-selfhosted
+    runs-on: rocky9
+    needs: store_container_images
+    env:
+      DEVELOPMENT_HOST: ${{ secrets.DEVELOPMENT_VM_HOST}}
+      DEVELOPMENT_USERNAME: ${{ secrets.DEVELOPMENT_VM_USERNAME }}
+      DEVELOPMENT_KEY: ${{secrets.DEVELOPMENT_VM_KEY}}
+      DEVELOPMENT_PORT: 22
+      DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
+      DOCKER_TAG: ${{ needs.test_and_build.outputs.docker_image_tag }}
+    steps:
 
-      
+      - name: Deploy container application on Development Host
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          REGISTRY: rmontesleo
+          IMAGE: ${{env.DOCKER_TAG}}
+          PROJECT: ${{ env.PROJECT_NAME}}
+          GITHUB_SHA: ${{ github.sha }} 
+        with:
+          host: ${{env.DEVELOPMENT_HOST}}
+          username: ${{env.DEVELOPMENT_USERNAME}}
+          key: ${{env.DEVELOPMENT_KEY}}
+          port: ${{env.DEVELOPMENT_PORT}}
+          envs: REGISTRY,IMAGE,PROJECT,GITHUB_SHA
+          script: |
+            id_list=$(docker ps -aq)
+            if [ -z "$id_list" ]; then
+              echo "No containers are running righ now"
+            else
+              docker rm -f "$id_list"
+            fi
+
+            echo "#### Registry $REGISTRY ####"
+            echo "#### Image $IMAGE #####"
+            echo "#### PROJECT $PROJECT #####" 
+            echo "#### SHA  $GITHUB_SHA" 
+
+            CONTAINER_IMAGE="$REGISTRY/$PROJECT:$GITHUB_SHA"
+            echo "$CONTAINER_IMAGE"
+
+            docker pull $CONTAINER_IMAGE
+            docker images
+            docker container run -d -p 8080:8080 --name web $CONTAINER_IMAGE
+            sleep 2
+            docker ps -a
+
