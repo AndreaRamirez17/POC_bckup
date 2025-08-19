@@ -49,6 +49,7 @@ cd ./terraform/akamai/testing
 ## REFERENCES
 
 ### GitHub Actions
+- [runner configuration without prompt](https://github.com/orgs/community/discussions/26893)
 - [Pass environment variables to shell script](https://github.com/appleboy/ssh-action?tab=readme-ov-file#pass-environment-variables-to-shell-script)
 - [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions#calculating-minute-and-storage-spending)
 - [Setting up budgets to control spending on metered products](https://docs.github.com/en/billing/tutorials/set-up-budgets)

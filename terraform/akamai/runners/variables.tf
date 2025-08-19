@@ -56,7 +56,7 @@ variable "instance_type" {
 variable "instance_label" {
   type        = string
   description = "The label for the Linode instance"
-  default     = "poc-github-runner-ubuntu-linode"
+  default     = "poc-runner-ubuntu"
 }
 
 variable "instance_tags" {

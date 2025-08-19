@@ -20,7 +20,7 @@ developer_password=$2
 apt-get update
 
 # Install jq
-apt-get install -y jq
+apt-get install -y jq maven
 
 # Create developer user with home directory
 useradd -m -s /bin/bash developer
