@@ -183,7 +183,7 @@ jobs:
       - name: Deploy container application on Development Host
         uses: appleboy/ssh-action@v1.0.3
         env:
-          REGISTRY: rmonteleo
+          REGISTRY: rmontesleo
           IMAGE: ${{env.DOCKER_TAG}}
           PROJECT: ${{ env.PROJECT_NAME}}
           GITHUB_SHA: ${{ github.sha }} 
