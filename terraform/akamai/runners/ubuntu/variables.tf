@@ -70,3 +70,21 @@ variable "authorized_users" {
   description = "List of Linode usernames that will receive root access to the instance"
   sensitive   = true
 }
+
+variable "github_runner_token"{
+  type = string
+  sensitive = true
+  description = "Required token to Create GitHub Runner on this Viirtual Machine"
+}
+
+variable "github_account" {
+  type = string
+  sensitive = true
+  description = "GitHub account to connect the runner"
+}
+
+variable "github_repository" {
+  type = string
+  sensitive = true
+  description = "GitHub Repository to connect the runner"
+}

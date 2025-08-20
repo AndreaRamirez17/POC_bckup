@@ -18,8 +18,10 @@ if [ -z "$3" ]; then
 fi
 repository=$3
 
+sudo apt update -y
+
 # Create the folder
-mkdir actions-runner && cd actions-runner 
+mkdir ~/actions-runner && cd  ~/actions-runner 
 
 # Download the latest runner package
 curl -o actions-runner-linux-x64-2.327.1.tar.gz \
@@ -47,6 +49,5 @@ tar xzf ./actions-runner-linux-x64-2.327.1.tar.gz
 # run it!
 ./run.sh &
 
-status=$($?)
-echo "Final Status  $status"
+echo "Ending script"
 

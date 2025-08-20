@@ -37,7 +37,7 @@ resource "linode_instance" "poc-ubuntu-runner-instance" {
       user     = "root"
       password = var.root_pass
     }
-  }
+  }  
 
   provisioner "remote-exec" {
     inline = [
@@ -53,6 +53,7 @@ resource "linode_instance" "poc-ubuntu-runner-instance" {
       password = var.root_pass
     }
   }
+
 }
 
 # firewall

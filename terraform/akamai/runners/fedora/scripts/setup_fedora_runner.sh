@@ -6,8 +6,10 @@ token=$1
 #
 github_accoutn=$2
 
+
+
 # Create the folder
-mkdir actions-runner && cd actions-runner 
+mkdir ~/actions-runner && cd  ~/actions-runner 
 
 # Download the latest runner package
 curl -o actions-runner-linux-x64-2.327.1.tar.gz \

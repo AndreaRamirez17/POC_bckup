@@ -1,67 +1,63 @@
 #!/bin/bash
 
-sleep 10
-
 # Check if username argument is provided
 if [ -z "$1" ]; then
-    echo "Error: Username not provided"
+    echo "Error: Developer username not provided"
     exit 1
 fi
 
-instance_username=$1
+runner_user=$1
 
 # Check if password argument is provided
 if [ -z "$2" ]; then
-    echo "Error: Password not provided"
+    echo "Error: Developer password not provided"
     exit 1
 fi
 
-instance_password=$2
+runner_password=$2
 
 # Update package list
-apt update -y
+apt-get update
 
-# Install required components
-apt install -y jq maven
+# Install jq
+apt-get install -y jq
 
-# Create instance user with home directory
-useradd -m -s /bin/bash $instance_username
+# Create user with home directory
+useradd -m -s /bin/bash $runner_user
 
-# Set password for instance user using the provided password
-echo "$instance_username:$developer_password" | chpasswd
+# Set password for user using the provided password
+echo "$runner_user:$runner_password" | chpasswd
 
-# Add instance user to sudo group
-usermod -aG sudo $instance_username
+# Add developer to sudo group
+usermod -aG sudo $runner_user
 
-# Create .ssh directory for instance user
-mkdir -p /home/$instance_username/.ssh
+# Create .ssh directory for developer user
+mkdir -p /home/$runner_user/.ssh
 
-# Copy root's authorized_keys to instance user
+# Copy root's authorized_keys to developer user
 if [ -f /root/.ssh/authorized_keys ]; then
-    cp /root/.ssh/authorized_keys /home/$instance_username/.ssh/
+    cp /root/.ssh/authorized_keys /home/$runner_user/.ssh/
 fi
 
 # Set proper ownership and permissions
-chown -R developer:developer /home/developer/.ssh
-chmod 700 /home/developer/.ssh
-chmod 600 /home/developer/.ssh/authorized_keys
+chown -R $runner_user:$runner_user /home/$runner_user/.ssh
+chmod 700 /home/$runner_user/.ssh
+chmod 600 /home/$runner_user/.ssh/authorized_keys
 
 # Install Docker if not already installed
 if ! [ -x "$(command -v docker)" ]; then
     curl -fsSL https://get.docker.com -o get-docker.sh
     sh get-docker.sh
-    # Just to verify if this step was executed
-    touch /tmp/docker-instalation-step.txt
 fi
 
 # Create docker group if it doesn't exist
 groupadd -f docker
 
-# Add instance user to docker group
-usermod -aG docker $instance_username
+# Add developer user to docker group
+usermod -aG docker $runner_user
 
-# Create sudo rule for instance user
-echo "$instance_username ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$instance_username
+# Create sudo rule for developer user
+echo "$runner_user ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$runner_user
 
 # Verify the sudoers file
 visudo -c
