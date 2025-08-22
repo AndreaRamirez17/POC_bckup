@@ -15,9 +15,9 @@ env:
 jobs:
   # Job 1: Build jar, Docker Image an execute Unit Tests
   test_and_build:
-    #runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: rocky9
+    #runs-on: rocky9
     outputs:      
       project_version: ${{ steps.get-version.outputs.project_version }}
       jar_file_name: ${{ steps.get-jar-name.outputs.jar_name }}
@@ -127,9 +127,9 @@ jobs:
 
   # Job 2: Upload Docker imagaes to Registryes
   store_container_images:  
-    #runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: rocky9
+    #runs-on: rocky9
     needs: test_and_build
     env:    
       DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
