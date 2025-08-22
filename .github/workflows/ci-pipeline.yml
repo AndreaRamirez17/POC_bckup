@@ -216,6 +216,9 @@ jobs:
       #      sleep 2
       #      docker ps -a
 
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Deploy on VPC using Action
         uses: ./.github/actions/deploy-continer-on-vpc
         with:
