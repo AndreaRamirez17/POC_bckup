@@ -170,51 +170,62 @@ jobs:
 
   # Job 3: Deploy Container image on Cloud Virtual Machine
   deploy_on_dev_environment:
-    #runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
     #runs-on: linode-ubuntu01-selfhosted
-    runs-on: rocky9
+    #runs-on: rocky9
     needs: store_container_images
-    env:
-      DEVELOPMENT_HOST: ${{ secrets.DEVELOPMENT_VM_HOST}}
-      DEVELOPMENT_USERNAME: ${{ secrets.DEVELOPMENT_VM_USERNAME }}
-      DEVELOPMENT_KEY: ${{secrets.DEVELOPMENT_VM_KEY}}
-      DEVELOPMENT_PORT: 22
-      DOCKER_USER_NAME: ${{ secrets.POC_DOCKER_USERNAME }}
-      DOCKER_TAG: ${{ needs.test_and_build.outputs.docker_image_tag }}
+    #env:
+    #  DEVELOPMENT_HOST: ${ { secrets.DEVELOPMENT_VM_HOST}}
+    #  DEVELOPMENT_USERNAME: ${ { secrets.DEVELOPMENT_VM_USERNAME }}
+    #  DEVELOPMENT_KEY: ${ {secrets.DEVELOPMENT_VM_KEY}}
+    #  DEVELOPMENT_PORT: 22
+    #  DOCKER_USER_NAME: ${ { secrets.POC_DOCKER_USERNAME }}
+    #  DOCKER_TAG: ${ { needs.test_and_build.outputs.docker_image_tag }}
     steps:
 
-      - name: Deploy container application on Development Host
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          REGISTRY: rmontesleo
-          IMAGE: ${{env.DOCKER_TAG}}
-          PROJECT: ${{ env.PROJECT_NAME}}
-          GITHUB_SHA: ${{ github.sha }} 
+      #- name: Deploy container application on Development Host
+      #  uses: appleboy/ssh-action@v1.0.3
+      #  env:
+      #    REGISTRY: rmontesleo
+      #    IMAGE: ${ {env.DOCKER_TAG}}
+      #    PROJECT: ${ { env.PROJECT_NAME}}
+      #    GITHUB_SHA: ${ { github.sha }} 
+      #  with:
+      #    host: ${ {env.DEVELOPMENT_HOST}}
+      #    username: ${ {env.DEVELOPMENT_USERNAME}}
+      #    key: ${ {env.DEVELOPMENT_KEY}}
+      #    port: ${ {env.DEVELOPMENT_PORT}}
+      #    envs: REGISTRY,IMAGE,PROJECT,GITHUB_SHA
+      #    script: |
+      #      id_list=$(docker ps -aq)
+      #      if [ -z "$id_list" ]; then
+      #        echo "No containers are running righ now"
+      #      else
+      #        docker rm -f "$id_list"
+      #      fi
+      #      echo "#### Registry $REGISTRY ####"
+      #      echo "#### Image $IMAGE #####"
+      #      echo "#### PROJECT $PROJECT #####" 
+      #      echo "#### SHA  $GITHUB_SHA" 
+      #  
+      #      CONTAINER_IMAGE="$REGISTRY/$PROJECT:$GITHUB_SHA"
+      #      echo "$CONTAINER_IMAGE"
+      #      docker pull $CONTAINER_IMAGE
+      #      docker images
+      #      docker container run -d -p 8080:8080 --name web $CONTAINER_IMAGE
+      #      sleep 2
+      #      docker ps -a
+
+      - name: Deploy on VPC using Action
+        uses: ./.github/actions/deploy-continer-on-vpc
         with:
-          host: ${{env.DEVELOPMENT_HOST}}
-          username: ${{env.DEVELOPMENT_USERNAME}}
-          key: ${{env.DEVELOPMENT_KEY}}
-          port: ${{env.DEVELOPMENT_PORT}}
-          envs: REGISTRY,IMAGE,PROJECT,GITHUB_SHA
-          script: |
-            id_list=$(docker ps -aq)
-            if [ -z "$id_list" ]; then
-              echo "No containers are running righ now"
-            else
-              docker rm -f "$id_list"
-            fi
+          host-name: ${{ env.secrets.DEVELOPMENT_VM_HOST }}
+          user-name: ${{ env.secrets.DEVELOPMENT_VM_USERNAME }}
+          host-key: ${{secrets.DEVELOPMENT_VM_KEY}}
+          port: '22'
+          registry: 'rmontesleo'
+          container-image: "${{ env.PROJECT }}:${{ github.sha }}"
+          host-port: '8080'
+          container-port: '8080'
 
-            echo "#### Registry $REGISTRY ####"
-            echo "#### Image $IMAGE #####"
-            echo "#### PROJECT $PROJECT #####" 
-            echo "#### SHA  $GITHUB_SHA" 
-
-            CONTAINER_IMAGE="$REGISTRY/$PROJECT:$GITHUB_SHA"
-            echo "$CONTAINER_IMAGE"
-
-            docker pull $CONTAINER_IMAGE
-            docker images
-            docker container run -d -p 8080:8080 --name web $CONTAINER_IMAGE
-            sleep 2
-            docker ps -a
-
+          
