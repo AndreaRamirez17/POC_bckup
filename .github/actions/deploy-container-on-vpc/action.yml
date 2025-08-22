@@ -1,0 +1,65 @@
+name: 'Deploy Container in a VPC'
+description: 'Deploy a container image inside a VPC'
+inputs:
+  host-name:
+    description: 'Hostname or IP of you VPC, or Virtual Machine'
+    required: true
+  user-name:
+    description: 'User name to login in the VPC'
+    required: true
+  host-key:
+    description: 'Your private Key to use for authentication'
+    required: true
+  port:
+    description: 'Port to use with SSH' 
+    required: false
+    default: '22'
+  registry:
+    description: 'The registry where your image is hosted'
+    required: true
+  container-image:
+    description: 'The container image, must contain the name and version to user'
+    required: true
+  host-port:
+    description: 'The Port where to use in the VPC'
+    required: true
+  container-port:
+    description: 'The port required for the appliation'
+    required: true 
+
+runs:
+  using: composite
+  steps:
+    - name: Deploy on VPC
+      uses: appleboy/ssh-action@1.0.3
+      env:
+        REGISTRY: ${{ inputs.registry }}
+        CONTAINER_IMAGE: ${{ inputs.container-image }}
+        HOST_PORT: ${{ inputs.host-port }}
+        CONTAINER_PORT: ${{ inputs.container-port }}
+      with:
+        host: ${{ inputs.host-name }}  
+        username: ${{ inputs.user-name }}
+        key: ${{ inputs.host-key }}
+        port: ${{ inputs.port }}
+        envs: REGISTRY,CONTAINER_IMAGE,HOST_PORT,CONTAINER_PORT
+        script: |
+
+          echo "#### REGISTRY - $REGISTRY"
+          echo "#### CONTAINER_IMAGE - $CONTAINER_IMAGE"
+          echo "#### HOST_PORT - $HOST_PORT"
+          echo "#### CONTAINER_PORT - $CONTAINER_PORT"
+
+          id_list=$(docker ps -aq)
+          if [ -z "$id_list" ]; then
+            echo "No container are running right now"
+          else
+            docker rm -f "$id_list"
+          fi
+
+          FULL_IMAGE="$REGISTRY/$CONTAINER_IMAGE"
+          docker pull $FULL_IMAGE
+          docker images
+          docker container run -d -p "$HOST_PORT:$COINTAINER_PORT" --name app $FULL_IMAGE
+          sleep 1
+          docker ps -a
